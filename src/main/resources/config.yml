@@ -1,31 +1,16 @@
-# RainbowNickname Configuration
-#
-# Animation speed in ticks (20 ticks = 1 second)
-# Lower values = faster animation
-# Recommended values: 2-8
-animation-speed: 4
+# RainbowNickname Plugin Configuration
 
-# Use bold text for nicknames
-# true = bold nickname (&l)
-# false = normal nickname
+# Velocità dell'animazione arcobaleno (in ticks)
+# 20 ticks = 1 secondo
+# Valori più bassi = animazione più veloce
+animation-speed: 10
+
+# Usa il testo in grassetto per i nomi
 use-bold: true
 
-# Smooth transition between colors
-# true = smoother transition
-# false = standard color change
-smooth-transition: true
+# Altezza della nametag sopra il giocatore (in blocchi)
+# 2.3 è l'altezza standard della nametag di Minecraft
+nametag-height: 2.3
 
-# Color configuration (for future versions)
-# colors:
-#   - DARK_RED
-#   - RED
-#   - GOLD
-#   - YELLOW
-#   - GREEN
-#   - DARK_GREEN
-#   - AQUA
-#   - DARK_AQUA
-#   - BLUE
-#   - DARK_BLUE
-#   - LIGHT_PURPLE
-#   - DARK_PURPLE
+# Messaggio di benvenuto (opzionale)
+welcome-message: "&aIl tuo nickname è ora arcobaleno!"

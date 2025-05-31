@@ -2,11 +2,16 @@ package com.Lino.rainbowNickname;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Location;
+import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scoreboard.Scoreboard;
@@ -23,10 +28,14 @@ public class RainbowNickname extends JavaPlugin implements Listener {
 
     private final Map<UUID, Integer> playerColorIndex = new HashMap<>();
     private final Map<UUID, String> originalNames = new HashMap<>();
+    private final Map<UUID, ArmorStand> playerArmorStands = new HashMap<>();
+
     private BukkitRunnable animationTask;
+    private BukkitRunnable positionTask;
     private Scoreboard scoreboard;
     private int animationSpeed;
     private boolean useBold;
+    private double nametagHeight;
 
     @Override
     public void onEnable() {
@@ -52,11 +61,12 @@ public class RainbowNickname extends JavaPlugin implements Listener {
                     setupPlayer(player);
                 }
             }
-            // Avvia l'animazione dopo aver configurato i giocatori
+            // Avvia le animazioni dopo aver configurato i giocatori
             startAnimation();
+            startPositionUpdater();
         }, 20L); // 1 secondo di delay
 
-        getLogger().info("RainbowNickname abilitato!");
+        getLogger().info("RainbowNickname abilitato con Armor Stands!");
     }
 
     private void loadConfiguration() {
@@ -65,6 +75,9 @@ public class RainbowNickname extends JavaPlugin implements Listener {
 
         // Carica l'opzione per il testo in grassetto
         useBold = getConfig().getBoolean("use-bold", true);
+
+        // Carica l'altezza della nametag
+        nametagHeight = getConfig().getDouble("nametag-height", 2.3);
 
         // Carica i colori
         RAINBOW_COLORS = new ChatColor[]{
@@ -80,12 +93,15 @@ public class RainbowNickname extends JavaPlugin implements Listener {
 
     @Override
     public void onDisable() {
-        // Ferma l'animazione
+        // Ferma le animazioni
         if (animationTask != null && !animationTask.isCancelled()) {
             animationTask.cancel();
         }
+        if (positionTask != null && !positionTask.isCancelled()) {
+            positionTask.cancel();
+        }
 
-        // Ripristina i nomi originali
+        // Ripristina i nomi originali e rimuovi armor stands
         for (Player player : Bukkit.getOnlinePlayers()) {
             restorePlayer(player);
         }
@@ -113,16 +129,45 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
 
-        // Rimuovi dalla mappa
+        // Rimuovi l'armor stand
+        ArmorStand armorStand = playerArmorStands.get(uuid);
+        if (armorStand != null && !armorStand.isDead()) {
+            armorStand.remove();
+        }
+
+        // Rimuovi dalle mappe
         playerColorIndex.remove(uuid);
         originalNames.remove(uuid);
+        playerArmorStands.remove(uuid);
 
-        // Rimuovi dal team
+        // Rimuovi dal team per nascondere la nametag originale
         String teamName = "rn_" + uuid.toString().substring(0, 8);
         Team team = scoreboard.getTeam(teamName);
         if (team != null) {
             team.unregister();
         }
+    }
+
+    @EventHandler
+    public void onPlayerMove(PlayerMoveEvent event) {
+        // Aggiorna la posizione dell'armor stand quando il giocatore si muove
+        // Questo viene gestito dal task di aggiornamento posizione per performance migliori
+    }
+
+    @EventHandler
+    public void onPlayerTeleport(PlayerTeleportEvent event) {
+        Player player = event.getPlayer();
+        UUID uuid = player.getUniqueId();
+
+        // Aggiorna immediatamente la posizione dell'armor stand dopo il teleport
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            ArmorStand armorStand = playerArmorStands.get(uuid);
+            if (armorStand != null && !armorStand.isDead() && player.isOnline()) {
+                Location newLocation = player.getLocation().clone();
+                newLocation.setY(newLocation.getY() + nametagHeight);
+                armorStand.teleport(newLocation);
+            }
+        }, 2L);
     }
 
     private void setupPlayer(Player player) {
@@ -134,30 +179,76 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         // Inizializza l'indice del colore casualmente per varietà
         playerColorIndex.put(uuid, (int) (Math.random() * RAINBOW_COLORS.length));
 
-        // Crea un team personale per il giocatore (nome più corto per compatibilità)
-        String teamName = "rn_" + uuid.toString().substring(0, 8);
-        Team team = scoreboard.getTeam(teamName);
-        if (team != null) {
-            team.unregister(); // Rimuovi il vecchio team se esiste
-        }
-        team = scoreboard.registerNewTeam(teamName);
+        // Nascondi la nametag originale del giocatore usando un team
+        hideOriginalNametag(player);
 
-        // IMPORTANTE: Imposta il colore del team come RESET per nascondere il nome originale
-        team.setColor(ChatColor.RESET);
+        // Crea l'armor stand per la nametag personalizzata
+        createCustomNametag(player);
 
-        // Aggiungi il giocatore al team
-        team.addEntry(player.getName());
-
-        // Imposta il prefisso iniziale
+        // Aggiorna il colore iniziale
         updatePlayerColor(player);
 
-        getLogger().info("Configurato giocatore: " + player.getName() + " con team: " + teamName);
+        getLogger().info("Configurato giocatore: " + player.getName() + " con armor stand personalizzato");
+    }
+
+    private void hideOriginalNametag(Player player) {
+        UUID uuid = player.getUniqueId();
+        String teamName = "rn_" + uuid.toString().substring(0, 8);
+
+        // Rimuovi il vecchio team se esiste
+        Team team = scoreboard.getTeam(teamName);
+        if (team != null) {
+            team.unregister();
+        }
+
+        // Crea un nuovo team per nascondere la nametag originale
+        team = scoreboard.registerNewTeam(teamName);
+        team.setOption(Team.Option.NAME_TAG_VISIBILITY, Team.OptionStatus.NEVER);
+        team.addEntry(player.getName());
+    }
+
+    private void createCustomNametag(Player player) {
+        UUID uuid = player.getUniqueId();
+
+        // Rimuovi il vecchio armor stand se esiste
+        ArmorStand oldArmorStand = playerArmorStands.get(uuid);
+        if (oldArmorStand != null && !oldArmorStand.isDead()) {
+            oldArmorStand.remove();
+        }
+
+        // Calcola la posizione dell'armor stand (sopra il giocatore)
+        Location armorStandLocation = player.getLocation().clone();
+        armorStandLocation.setY(armorStandLocation.getY() + nametagHeight);
+
+        // Crea l'armor stand
+        ArmorStand armorStand = (ArmorStand) player.getWorld().spawnEntity(armorStandLocation, EntityType.ARMOR_STAND);
+
+        // Configura l'armor stand
+        armorStand.setVisible(false); // Invisibile
+        armorStand.setGravity(false); // Non cade
+        armorStand.setCanPickupItems(false); // Non raccoglie oggetti
+        armorStand.setCustomNameVisible(true); // Nome personalizzato visibile
+        armorStand.setMarker(true); // Marker (non ha hitbox)
+        armorStand.setSilent(true); // Silenzioso
+        armorStand.setInvulnerable(true); // Invulnerabile
+        armorStand.setBasePlate(false); // Nessuna base
+        armorStand.setArms(false); // Nessun braccio
+        armorStand.setSmall(true); // Piccolo per meno impatto visivo
+
+        // Salva l'armor stand nella mappa
+        playerArmorStands.put(uuid, armorStand);
     }
 
     private void restorePlayer(Player player) {
         UUID uuid = player.getUniqueId();
 
-        // Rimuovi dal team
+        // Rimuovi l'armor stand
+        ArmorStand armorStand = playerArmorStands.get(uuid);
+        if (armorStand != null && !armorStand.isDead()) {
+            armorStand.remove();
+        }
+
+        // Rimuovi dal team per ripristinare la nametag originale
         String teamName = "rn_" + uuid.toString().substring(0, 8);
         Team team = scoreboard.getTeam(teamName);
         if (team != null) {
@@ -175,6 +266,9 @@ public class RainbowNickname extends JavaPlugin implements Listener {
             player.setDisplayName(player.getName());
             player.setPlayerListName(player.getName());
         }
+
+        // Rimuovi dalle mappe
+        playerArmorStands.remove(uuid);
     }
 
     private void startAnimation() {
@@ -195,7 +289,46 @@ public class RainbowNickname extends JavaPlugin implements Listener {
 
         // Usa la velocità configurata
         animationTask.runTaskTimer(this, 0L, animationSpeed);
-        getLogger().info("Animazione avviata con velocità: " + animationSpeed + " ticks");
+        getLogger().info("Animazione arcobaleno avviata con velocità: " + animationSpeed + " ticks");
+    }
+
+    private void startPositionUpdater() {
+        if (positionTask != null && !positionTask.isCancelled()) {
+            positionTask.cancel();
+        }
+
+        positionTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                for (Map.Entry<UUID, ArmorStand> entry : playerArmorStands.entrySet()) {
+                    UUID uuid = entry.getKey();
+                    ArmorStand armorStand = entry.getValue();
+
+                    Player player = Bukkit.getPlayer(uuid);
+
+                    if (player != null && player.isOnline() && armorStand != null && !armorStand.isDead()) {
+                        // Aggiorna la posizione dell'armor stand
+                        Location playerLocation = player.getLocation();
+                        Location armorStandLocation = armorStand.getLocation();
+
+                        // Solo se il giocatore si è mosso significativamente
+                        if (playerLocation.distance(armorStandLocation) > 0.1) {
+                            Location newLocation = playerLocation.clone();
+                            newLocation.setY(newLocation.getY() + nametagHeight);
+                            armorStand.teleport(newLocation);
+                        }
+                    } else if (armorStand != null && !armorStand.isDead()) {
+                        // Rimuovi armor stand orfani
+                        armorStand.remove();
+                        playerArmorStands.remove(uuid);
+                    }
+                }
+            }
+        };
+
+        // Aggiorna le posizioni ogni 2 ticks (più frequente per fluidità)
+        positionTask.runTaskTimer(this, 0L, 2L);
+        getLogger().info("Aggiornamento posizioni armor stand avviato");
     }
 
     private void updatePlayerColor(Player player) {
@@ -210,77 +343,29 @@ public class RainbowNickname extends JavaPlugin implements Listener {
             return;
         }
 
+        ArmorStand armorStand = playerArmorStands.get(uuid);
+        if (armorStand == null || armorStand.isDead()) {
+            return;
+        }
+
         // Ottieni l'indice corrente del colore
         int colorIndex = playerColorIndex.get(uuid);
 
-        // Aggiorna il team per il nome sopra la testa
-        String teamName = "rn_" + uuid.toString().substring(0, 8);
-        Team team = scoreboard.getTeam(teamName);
-        if (team != null) {
-            // Costruisci il nome completo arcobaleno per la nametag
-            StringBuilder nametagName = new StringBuilder();
-            for (int i = 0; i < originalName.length(); i++) {
-                char c = originalName.charAt(i);
-                int currentColorIndex = (colorIndex + i) % RAINBOW_COLORS.length;
-                nametagName.append(RAINBOW_COLORS[currentColorIndex]);
-                if (useBold) {
-                    nametagName.append(ChatColor.BOLD);
-                }
-                nametagName.append(c);
+        // Costruisci il nome arcobaleno completo per l'armor stand
+        StringBuilder rainbowName = new StringBuilder();
+        for (int i = 0; i < originalName.length(); i++) {
+            char c = originalName.charAt(i);
+            int currentColorIndex = (colorIndex + i) % RAINBOW_COLORS.length;
+
+            rainbowName.append(RAINBOW_COLORS[currentColorIndex]);
+            if (useBold) {
+                rainbowName.append(ChatColor.BOLD);
             }
-
-            String fullName = nametagName.toString();
-
-            // Gestisce la distribuzione tra prefix e suffix
-            if (fullName.length() <= 16) {
-                team.setPrefix(fullName);
-                team.setSuffix("");
-            } else {
-                // Per nomi lunghi, dividi intelligentemente
-                String prefix = "";
-                String suffix = "";
-
-                int prefixLength = 0;
-                int charCount = 0;
-
-                // Calcola quanti caratteri effettivi possiamo mettere nel prefix
-                for (int i = 0; i < originalName.length() && prefixLength < 14; i++) {
-                    char c = originalName.charAt(i);
-                    int currentColorIndex = (colorIndex + i) % RAINBOW_COLORS.length;
-
-                    String colorCode = RAINBOW_COLORS[currentColorIndex].toString();
-                    String boldCode = useBold ? ChatColor.BOLD.toString() : "";
-
-                    int totalLength = colorCode.length() + boldCode.length() + 1; // +1 per il carattere
-
-                    if (prefixLength + totalLength <= 16) {
-                        prefix += colorCode + boldCode + c;
-                        prefixLength += totalLength;
-                        charCount++;
-                    } else {
-                        break;
-                    }
-                }
-
-                // Il resto va nel suffix
-                for (int i = charCount; i < originalName.length() && suffix.length() < 14; i++) {
-                    char c = originalName.charAt(i);
-                    int currentColorIndex = (colorIndex + i) % RAINBOW_COLORS.length;
-
-                    String colorCode = RAINBOW_COLORS[currentColorIndex].toString();
-                    String boldCode = useBold ? ChatColor.BOLD.toString() : "";
-
-                    if (suffix.length() + colorCode.length() + boldCode.length() + 1 <= 16) {
-                        suffix += colorCode + boldCode + c;
-                    } else {
-                        break;
-                    }
-                }
-
-                team.setPrefix(prefix);
-                team.setSuffix(suffix);
-            }
+            rainbowName.append(c);
         }
+
+        // Aggiorna il nome dell'armor stand
+        armorStand.setCustomName(rainbowName.toString());
 
         // Mantieni il nome originale per la chat
         player.setDisplayName(originalNames.get(uuid));
@@ -292,11 +377,9 @@ public class RainbowNickname extends JavaPlugin implements Listener {
             int currentColorIndex = (colorIndex + i) % RAINBOW_COLORS.length;
 
             coloredTabName.append(RAINBOW_COLORS[currentColorIndex]);
-
             if (useBold) {
                 coloredTabName.append(ChatColor.BOLD);
             }
-
             coloredTabName.append(c);
         }
 
