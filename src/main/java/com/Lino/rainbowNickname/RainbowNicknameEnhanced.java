@@ -1,4 +1,4 @@
-package com.example.rainbownickname;
+package com.Lino.rainbowNickname;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -40,14 +40,17 @@ public class RainbowNicknameEnhanced extends JavaPlugin implements Listener {
     private BukkitRunnable animationTask;
     private Scoreboard scoreboard;
     private int animationSpeed = 4; // Tick tra aggiornamenti
+    private boolean useBold = true; // Opzione per testo in grassetto
 
     private static class PlayerData {
         final String originalName;
         int colorIndex;
+        Team team;
 
-        PlayerData(String originalName) {
+        PlayerData(String originalName, Team team) {
             this.originalName = originalName;
             this.colorIndex = 0;
+            this.team = team;
         }
     }
 
@@ -56,8 +59,9 @@ public class RainbowNicknameEnhanced extends JavaPlugin implements Listener {
         // Salva config default
         saveDefaultConfig();
 
-        // Carica velocità animazione dalla config
+        // Carica configurazione
         animationSpeed = getConfig().getInt("animation-speed", 4);
+        useBold = getConfig().getBoolean("use-bold", true);
 
         // Registra eventi
         getServer().getPluginManager().registerEvents(this, this);
@@ -162,6 +166,27 @@ public class RainbowNicknameEnhanced extends JavaPlugin implements Listener {
                     }
                     return true;
 
+                case "bold":
+                    if (!sender.hasPermission(PERMISSION_ADMIN)) {
+                        sender.sendMessage(ChatColor.RED + "Non hai il permesso per usare questo comando!");
+                        return true;
+                    }
+
+                    useBold = !useBold;
+                    getConfig().set("use-bold", useBold);
+                    saveConfig();
+
+                    sender.sendMessage(ChatColor.GREEN + "Testo in grassetto " +
+                            (useBold ? "abilitato" : "disabilitato") + "!");
+
+                    // Aggiorna tutti i giocatori
+                    for (Player p : Bukkit.getOnlinePlayers()) {
+                        if (playerData.containsKey(p.getUniqueId())) {
+                            updatePlayerColor(p);
+                        }
+                    }
+                    return true;
+
                 default:
                     sendHelp(sender);
                     return true;
@@ -190,10 +215,10 @@ public class RainbowNicknameEnhanced extends JavaPlugin implements Listener {
         UUID uuid = player.getUniqueId();
 
         // Pulisci i dati del giocatore
-        playerData.remove(uuid);
-
-        // Rimuovi il team
-        removePlayerTeam(uuid);
+        PlayerData data = playerData.remove(uuid);
+        if (data != null && data.team != null) {
+            data.team.unregister();
+        }
     }
 
     private boolean shouldHaveRainbow(Player player) {
@@ -203,10 +228,7 @@ public class RainbowNicknameEnhanced extends JavaPlugin implements Listener {
     private void setupPlayer(Player player) {
         UUID uuid = player.getUniqueId();
 
-        // Salva i dati del giocatore
-        playerData.put(uuid, new PlayerData(player.getName()));
-
-        // Crea o ottieni il team del giocatore
+        // Crea un team unico per il giocatore
         String teamName = getTeamName(uuid);
         Team team = scoreboard.getTeam(teamName);
         if (team == null) {
@@ -217,6 +239,9 @@ public class RainbowNicknameEnhanced extends JavaPlugin implements Listener {
         team.addEntry(player.getName());
         team.setOption(Team.Option.NAME_TAG_VISIBILITY, Team.OptionStatus.ALWAYS);
 
+        // Salva i dati del giocatore
+        playerData.put(uuid, new PlayerData(player.getName(), team));
+
         // Applica il colore iniziale
         updatePlayerColor(player);
     }
@@ -224,23 +249,15 @@ public class RainbowNicknameEnhanced extends JavaPlugin implements Listener {
     private void restorePlayer(Player player) {
         UUID uuid = player.getUniqueId();
 
-        // Rimuovi i dati
-        playerData.remove(uuid);
-
-        // Rimuovi dal team
-        removePlayerTeam(uuid);
+        // Rimuovi i dati e il team
+        PlayerData data = playerData.remove(uuid);
+        if (data != null && data.team != null) {
+            data.team.unregister();
+        }
 
         // Ripristina il nome
         player.setDisplayName(player.getName());
         player.setPlayerListName(player.getName());
-    }
-
-    private void removePlayerTeam(UUID uuid) {
-        String teamName = getTeamName(uuid);
-        Team team = scoreboard.getTeam(teamName);
-        if (team != null) {
-            team.unregister();
-        }
     }
 
     private String getTeamName(UUID uuid) {
@@ -285,31 +302,85 @@ public class RainbowNicknameEnhanced extends JavaPlugin implements Listener {
         for (int i = 0; i < originalName.length(); i++) {
             char c = originalName.charAt(i);
             int colorIndex = (baseColorIndex + i) % RAINBOW_COLORS.length;
-            coloredName.append(RAINBOW_COLORS[colorIndex]).append(c);
-        }
-
-        // Aggiorna il team per il nome sopra la testa
-        String teamName = getTeamName(uuid);
-        Team team = scoreboard.getTeam(teamName);
-        if (team != null) {
-            // Usa il colore del primo carattere per il team
-            ChatColor firstColor = RAINBOW_COLORS[baseColorIndex];
-            team.setPrefix(firstColor.toString());
-
-            // Per versioni 1.13+
-            try {
-                team.setColor(firstColor);
-            } catch (NoSuchMethodError ignored) {
-                // Versione precedente
+            coloredName.append(RAINBOW_COLORS[colorIndex]);
+            if (useBold) {
+                coloredName.append(ChatColor.BOLD);
             }
+            coloredName.append(c);
         }
 
-        // Aggiorna display name e tab list
+        // Per il nome sopra la testa, dobbiamo usare prefix e suffix del team
+        // Minecraft permette solo 16 caratteri per prefix e suffix
+        String fullColoredName = buildColoredNameForTeam(originalName, baseColorIndex);
+
+        // Dividi il nome colorato tra prefix, nome e suffix
+        applyToTeam(data.team, player.getName(), fullColoredName);
+
+        // Aggiorna display name e tab list con il nome completo colorato
         player.setDisplayName(coloredName.toString());
         player.setPlayerListName(coloredName.toString());
 
         // Incrementa l'indice per il prossimo frame
         data.colorIndex = (data.colorIndex + 1) % RAINBOW_COLORS.length;
+    }
+
+    private String buildColoredNameForTeam(String name, int baseColorIndex) {
+        StringBuilder result = new StringBuilder();
+
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            int colorIndex = (baseColorIndex + i) % RAINBOW_COLORS.length;
+            result.append(RAINBOW_COLORS[colorIndex]);
+            if (useBold) {
+                result.append(ChatColor.BOLD);
+            }
+            result.append(c);
+        }
+
+        return result.toString();
+    }
+
+    private void applyToTeam(Team team, String playerName, String coloredName) {
+        // Minecraft limita prefix e suffix a 16 caratteri ciascuno (64 in totale con il nome)
+        // Dobbiamo essere creativi per mostrare più colori possibili
+
+        // Reset formato
+        team.setPrefix("");
+        team.setSuffix("");
+
+        // Calcola quanti caratteri possiamo mettere nel prefix
+        int prefixChars = Math.min(coloredName.length(), 16);
+
+        // Se il nome colorato è corto, mettilo tutto nel prefix
+        if (coloredName.length() <= 16) {
+            team.setPrefix(coloredName);
+        } else {
+            // Altrimenti dividi tra prefix e suffix
+            String prefix = coloredName.substring(0, 16);
+            team.setPrefix(prefix);
+
+            // Se c'è ancora spazio, usa il suffix
+            if (coloredName.length() > 16) {
+                int suffixStart = 16;
+                int suffixEnd = Math.min(coloredName.length(), 32);
+                String suffix = coloredName.substring(suffixStart, suffixEnd);
+                team.setSuffix(suffix);
+            }
+        }
+
+        // Imposta il colore del team basato sul primo carattere
+        try {
+            ChatColor firstColor = RAINBOW_COLORS[0];
+            for (ChatColor color : RAINBOW_COLORS) {
+                if (coloredName.contains(color.toString())) {
+                    firstColor = color;
+                    break;
+                }
+            }
+            team.setColor(firstColor);
+        } catch (NoSuchMethodError ignored) {
+            // Versione precedente di Minecraft
+        }
     }
 
     private void toggleRainbow(Player player) {
@@ -348,12 +419,20 @@ public class RainbowNicknameEnhanced extends JavaPlugin implements Listener {
         // Ricarica config
         reloadConfig();
         animationSpeed = getConfig().getInt("animation-speed", 4);
+        useBold = getConfig().getBoolean("use-bold", true);
 
         // Riavvia animazione
         if (animationTask != null) {
             animationTask.cancel();
         }
         startAnimation();
+
+        // Aggiorna tutti i giocatori
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (playerData.containsKey(player.getUniqueId())) {
+                updatePlayerColor(player);
+            }
+        }
     }
 
     private void cleanupOldTeams() {
@@ -374,6 +453,7 @@ public class RainbowNicknameEnhanced extends JavaPlugin implements Listener {
         if (sender.hasPermission(PERMISSION_ADMIN)) {
             sender.sendMessage(ChatColor.YELLOW + "/rainbownick reload" + ChatColor.WHITE + " - Ricarica il plugin");
             sender.sendMessage(ChatColor.YELLOW + "/rainbownick speed <tick>" + ChatColor.WHITE + " - Imposta la velocità dell'animazione (1-20)");
+            sender.sendMessage(ChatColor.YELLOW + "/rainbownick bold" + ChatColor.WHITE + " - Attiva/disattiva testo in grassetto");
         }
     }
 }
