@@ -7,9 +7,9 @@ import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
-import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -17,496 +17,409 @@ import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scoreboard.Scoreboard;
 import org.bukkit.scoreboard.Team;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class RainbowNickname extends JavaPlugin implements Listener {
 
     private static final String PERMISSION = "rainbownick.use";
-    private ChatColor[] RAINBOW_COLORS;
+    private static final ChatColor[] RAINBOW_COLORS = {
+            ChatColor.RED,
+            ChatColor.GOLD,
+            ChatColor.YELLOW,
+            ChatColor.GREEN,
+            ChatColor.AQUA,
+            ChatColor.BLUE,
+            ChatColor.LIGHT_PURPLE
+    };
 
-    private final Map<UUID, Integer> playerColorIndex = new HashMap<>();
-    private final Map<UUID, String> originalNames = new HashMap<>();
-    private final Map<UUID, ArmorStand> playerArmorStands = new HashMap<>();
+    // Struttura dati ottimizzata per i dati del giocatore
+    private static class PlayerData {
+        final String originalName;
+        final ArmorStand armorStand;
+        int colorIndex;
+        String lastArmorStandName;
+        String lastTabName;
+        Location lastLocation;
 
-    // Sistema di cache per i nomi colorati
+        PlayerData(String originalName, ArmorStand armorStand, int colorIndex) {
+            this.originalName = originalName;
+            this.armorStand = armorStand;
+            this.colorIndex = colorIndex;
+            this.lastLocation = armorStand.getLocation();
+        }
+    }
+
+    // Mappa principale per i dati dei giocatori
+    private final Map<UUID, PlayerData> playerData = new ConcurrentHashMap<>();
+
+    // Cache ottimizzata con array pre-calcolati
     private final Map<String, String[]> nameCache = new ConcurrentHashMap<>();
-    private final Map<UUID, String> lastArmorStandName = new HashMap<>();
-    private final Map<UUID, String> lastTabName = new HashMap<>();
+
+    // Set per tracciare i giocatori con permesso (più veloce per i controlli)
+    private final Set<UUID> permittedPlayers = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     private BukkitRunnable animationTask;
     private BukkitRunnable positionTask;
-    private BukkitRunnable cacheCleanupTask;
     private Scoreboard scoreboard;
+
+    // Configurazioni
     private int animationSpeed;
     private boolean useBold;
     private double nametagHeight;
-    private int cacheSize;
-    private long cacheCleanupInterval;
+    private double positionThreshold;
+    private boolean useAsyncTasks;
+    private int maxCacheSize;
 
     @Override
     public void onEnable() {
-        // Salva il config.yml di default se non esiste
         saveDefaultConfig();
-
-        // Carica le configurazioni
         loadConfiguration();
 
-        // Registra eventi
         getServer().getPluginManager().registerEvents(this, this);
-
-        // Inizializza scoreboard
         scoreboard = Bukkit.getScoreboardManager().getMainScoreboard();
 
-        // Pulisci vecchi team se esistono
         cleanupOldTeams();
 
-        // Applica a tutti i giocatori online (con un piccolo delay)
-        Bukkit.getScheduler().runTaskLater(this, () -> {
-            for (Player player : Bukkit.getOnlinePlayers()) {
-                if (player.hasPermission(PERMISSION)) {
-                    setupPlayer(player);
+        // Inizializzazione asincrona per non bloccare il thread principale
+        if (useAsyncTasks) {
+            Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+                // Pre-cache i nomi di tutti i giocatori online
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    if (player.hasPermission(PERMISSION)) {
+                        precachePlayerNames(player.getName());
+                    }
                 }
-            }
-            // Avvia le animazioni dopo aver configurato i giocatori
-            startAnimation();
-            startPositionUpdater();
-            startCacheCleanup();
-        }, 20L); // 1 secondo di delay
 
-        getLogger().info("RainbowNickname abilitato con Armor Stands e Cache ottimizzata!");
+                // Torna sul thread principale per setup dei giocatori
+                Bukkit.getScheduler().runTask(this, () -> {
+                    for (Player player : Bukkit.getOnlinePlayers()) {
+                        if (player.hasPermission(PERMISSION)) {
+                            setupPlayer(player);
+                        }
+                    }
+                    startTasks();
+                });
+            });
+        } else {
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    if (player.hasPermission(PERMISSION)) {
+                        setupPlayer(player);
+                    }
+                }
+                startTasks();
+            }, 20L);
+        }
+
+        getLogger().info("RainbowNickname abilitato - Versione ottimizzata!");
     }
 
     private void loadConfiguration() {
-        // Carica la velocità dell'animazione (in ticks)
-        animationSpeed = getConfig().getInt("animation-speed", 10);
-
-        // Carica l'opzione per il testo in grassetto
+        animationSpeed = Math.max(1, getConfig().getInt("animation-speed", 10));
         useBold = getConfig().getBoolean("use-bold", true);
-
-        // Carica l'altezza della nametag
         nametagHeight = getConfig().getDouble("nametag-height", 2.3);
-
-        // Configurazioni per la cache
-        cacheSize = getConfig().getInt("cache.max-size", 1000);
-        cacheCleanupInterval = getConfig().getLong("cache.cleanup-interval", 300); // 5 minuti in secondi
-
-        // Carica i colori
-        RAINBOW_COLORS = new ChatColor[]{
-                ChatColor.RED,
-                ChatColor.GOLD,
-                ChatColor.YELLOW,
-                ChatColor.GREEN,
-                ChatColor.AQUA,
-                ChatColor.BLUE,
-                ChatColor.LIGHT_PURPLE
-        };
+        positionThreshold = getConfig().getDouble("position-threshold", 0.1);
+        useAsyncTasks = getConfig().getBoolean("use-async-tasks", true);
+        maxCacheSize = getConfig().getInt("cache.max-size", 1000);
     }
 
     @Override
     public void onDisable() {
-        // Ferma le animazioni
-        if (animationTask != null && !animationTask.isCancelled()) {
-            animationTask.cancel();
-        }
-        if (positionTask != null && !positionTask.isCancelled()) {
-            positionTask.cancel();
-        }
-        if (cacheCleanupTask != null && !cacheCleanupTask.isCancelled()) {
-            cacheCleanupTask.cancel();
-        }
+        // Cancella i task
+        if (animationTask != null) animationTask.cancel();
+        if (positionTask != null) positionTask.cancel();
 
-        // Ripristina i nomi originali e rimuovi armor stands
+        // Cleanup in batch
+        playerData.values().parallelStream().forEach(data -> {
+            if (data.armorStand != null && !data.armorStand.isDead()) {
+                // Usa il thread principale per rimuovere entità
+                Bukkit.getScheduler().runTask(this, () -> data.armorStand.remove());
+            }
+        });
+
+        // Ripristina i nomi originali
         for (Player player : Bukkit.getOnlinePlayers()) {
             restorePlayer(player);
         }
 
-        // Pulisci i team e la cache
         cleanupOldTeams();
-        clearCache();
+        playerData.clear();
+        nameCache.clear();
+        permittedPlayers.clear();
 
         getLogger().info("RainbowNickname disabilitato!");
     }
 
-    @EventHandler
+    @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
 
-        // Configura il giocatore con un piccolo delay per assicurarsi che sia completamente caricato
-        Bukkit.getScheduler().runTaskLater(this, () -> {
-            if (player.isOnline() && player.hasPermission(PERMISSION)) {
-                setupPlayer(player);
-            }
-        }, 10L);
+        // Check asincrono del permesso
+        if (useAsyncTasks) {
+            Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+                if (player.hasPermission(PERMISSION)) {
+                    // Pre-cache il nome
+                    precachePlayerNames(player.getName());
+
+                    // Setup sul thread principale
+                    Bukkit.getScheduler().runTaskLater(this, () -> {
+                        if (player.isOnline()) {
+                            setupPlayer(player);
+                        }
+                    }, 10L);
+                }
+            });
+        } else {
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (player.isOnline() && player.hasPermission(PERMISSION)) {
+                    setupPlayer(player);
+                }
+            }, 10L);
+        }
     }
 
-    @EventHandler
+    @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerQuit(PlayerQuitEvent event) {
-        Player player = event.getPlayer();
-        UUID uuid = player.getUniqueId();
+        UUID uuid = event.getPlayer().getUniqueId();
+        PlayerData data = playerData.remove(uuid);
 
-        // Rimuovi l'armor stand
-        ArmorStand armorStand = playerArmorStands.get(uuid);
-        if (armorStand != null && !armorStand.isDead()) {
-            armorStand.remove();
-        }
-
-        // Rimuovi dalle mappe
-        playerColorIndex.remove(uuid);
-        originalNames.remove(uuid);
-        playerArmorStands.remove(uuid);
-        lastArmorStandName.remove(uuid);
-        lastTabName.remove(uuid);
-
-        // Rimuovi dal team per nascondere la nametag originale
-        String teamName = "rn_" + uuid.toString().substring(0, 8);
-        Team team = scoreboard.getTeam(teamName);
-        if (team != null) {
-            team.unregister();
-        }
-    }
-
-    @EventHandler
-    public void onPlayerMove(PlayerMoveEvent event) {
-        // Aggiorna la posizione dell'armor stand quando il giocatore si muove
-        // Questo viene gestito dal task di aggiornamento posizione per performance migliori
-    }
-
-    @EventHandler
-    public void onPlayerTeleport(PlayerTeleportEvent event) {
-        Player player = event.getPlayer();
-        UUID uuid = player.getUniqueId();
-
-        // Aggiorna immediatamente la posizione dell'armor stand dopo il teleport
-        Bukkit.getScheduler().runTaskLater(this, () -> {
-            ArmorStand armorStand = playerArmorStands.get(uuid);
-            if (armorStand != null && !armorStand.isDead() && player.isOnline()) {
-                Location newLocation = player.getLocation().clone();
-                newLocation.setY(newLocation.getY() + nametagHeight);
-                armorStand.teleport(newLocation);
+        if (data != null) {
+            // Rimuovi armor stand
+            if (data.armorStand != null && !data.armorStand.isDead()) {
+                data.armorStand.remove();
             }
-        }, 2L);
+
+            // Cleanup team
+            String teamName = "rn_" + uuid.toString().substring(0, 8);
+            Team team = scoreboard.getTeam(teamName);
+            if (team != null) {
+                team.unregister();
+            }
+        }
+
+        permittedPlayers.remove(uuid);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerTeleport(PlayerTeleportEvent event) {
+        if (event.isCancelled()) return;
+
+        Player player = event.getPlayer();
+        UUID uuid = player.getUniqueId();
+        PlayerData data = playerData.get(uuid);
+
+        if (data != null && data.armorStand != null && !data.armorStand.isDead()) {
+            // Teleport immediato dell'armor stand
+            Location newLocation = event.getTo().clone();
+            newLocation.setY(newLocation.getY() + nametagHeight);
+            data.armorStand.teleport(newLocation);
+            data.lastLocation = newLocation;
+        }
     }
 
     private void setupPlayer(Player player) {
         UUID uuid = player.getUniqueId();
+        String name = player.getName();
 
-        // Salva il nome originale
-        originalNames.put(uuid, player.getName());
+        // Pre-cache i nomi se non già fatto
+        if (!nameCache.containsKey(name)) {
+            precachePlayerNames(name);
+        }
 
-        // Inizializza l'indice del colore casualmente per varietà
-        playerColorIndex.put(uuid, (int) (Math.random() * RAINBOW_COLORS.length));
-
-        // Pre-calcola e cachea i nomi per questo giocatore
-        precachePlayerNames(player.getName());
-
-        // Nascondi la nametag originale del giocatore usando un team
+        // Nascondi nametag originale
         hideOriginalNametag(player);
 
-        // Crea l'armor stand per la nametag personalizzata
-        createCustomNametag(player);
+        // Crea armor stand
+        ArmorStand armorStand = createArmorStand(player);
 
-        // Aggiorna il colore iniziale
-        updatePlayerColor(player);
+        // Crea e salva PlayerData
+        int startIndex = (int) (Math.random() * RAINBOW_COLORS.length);
+        PlayerData data = new PlayerData(name, armorStand, startIndex);
+        playerData.put(uuid, data);
+        permittedPlayers.add(uuid);
 
-        getLogger().info("Configurato giocatore: " + player.getName() + " con armor stand personalizzato");
+        // Aggiorna colore iniziale
+        updatePlayerColor(uuid, data);
     }
 
     private void precachePlayerNames(String playerName) {
-        if (nameCache.containsKey(playerName)) {
-            return; // Già cachato
+        if (nameCache.size() >= maxCacheSize) {
+            // Rimuovi le entry più vecchie (FIFO)
+            Iterator<String> iterator = nameCache.keySet().iterator();
+            if (iterator.hasNext()) {
+                iterator.next();
+                iterator.remove();
+            }
         }
 
         String[] cachedNames = new String[RAINBOW_COLORS.length];
 
-        // Pre-calcola tutti i possibili offset di colore per questo nome
+        // Pre-calcola tutti i nomi con StringBuilder ottimizzato
         for (int offset = 0; offset < RAINBOW_COLORS.length; offset++) {
-            StringBuilder rainbowName = new StringBuilder();
-            for (int i = 0; i < playerName.length(); i++) {
-                char c = playerName.charAt(i);
-                int colorIndex = (offset + i) % RAINBOW_COLORS.length;
+            StringBuilder sb = new StringBuilder(playerName.length() * 4);
 
-                rainbowName.append(RAINBOW_COLORS[colorIndex]);
+            for (int i = 0; i < playerName.length(); i++) {
+                ChatColor color = RAINBOW_COLORS[(offset + i) % RAINBOW_COLORS.length];
+                sb.append(color);
                 if (useBold) {
-                    rainbowName.append(ChatColor.BOLD);
+                    sb.append(ChatColor.BOLD);
                 }
-                rainbowName.append(c);
+                sb.append(playerName.charAt(i));
             }
-            cachedNames[offset] = rainbowName.toString();
+
+            cachedNames[offset] = sb.toString();
         }
 
         nameCache.put(playerName, cachedNames);
-
-        // Controlla se la cache è troppo grande
-        if (nameCache.size() > cacheSize) {
-            cleanupCache();
-        }
-    }
-
-    private String getCachedRainbowName(String playerName, int colorOffset) {
-        String[] cachedNames = nameCache.get(playerName);
-        if (cachedNames == null) {
-            // Se non è cachato, pre-calcolalo
-            precachePlayerNames(playerName);
-            cachedNames = nameCache.get(playerName);
-        }
-
-        int normalizedOffset = colorOffset % RAINBOW_COLORS.length;
-        return cachedNames[normalizedOffset];
     }
 
     private void hideOriginalNametag(Player player) {
-        UUID uuid = player.getUniqueId();
-        String teamName = "rn_" + uuid.toString().substring(0, 8);
+        String teamName = "rn_" + player.getUniqueId().toString().substring(0, 8);
 
-        // Rimuovi il vecchio team se esiste
         Team team = scoreboard.getTeam(teamName);
-        if (team != null) {
-            team.unregister();
+        if (team == null) {
+            team = scoreboard.registerNewTeam(teamName);
+            team.setOption(Team.Option.NAME_TAG_VISIBILITY, Team.OptionStatus.NEVER);
         }
-
-        // Crea un nuovo team per nascondere la nametag originale
-        team = scoreboard.registerNewTeam(teamName);
-        team.setOption(Team.Option.NAME_TAG_VISIBILITY, Team.OptionStatus.NEVER);
         team.addEntry(player.getName());
     }
 
-    private void createCustomNametag(Player player) {
-        UUID uuid = player.getUniqueId();
+    private ArmorStand createArmorStand(Player player) {
+        Location loc = player.getLocation().clone();
+        loc.setY(loc.getY() + nametagHeight);
 
-        // Rimuovi il vecchio armor stand se esiste
-        ArmorStand oldArmorStand = playerArmorStands.get(uuid);
-        if (oldArmorStand != null && !oldArmorStand.isDead()) {
-            oldArmorStand.remove();
-        }
+        ArmorStand armorStand = (ArmorStand) player.getWorld().spawnEntity(loc, EntityType.ARMOR_STAND);
 
-        // Calcola la posizione dell'armor stand (sopra il giocatore)
-        Location armorStandLocation = player.getLocation().clone();
-        armorStandLocation.setY(armorStandLocation.getY() + nametagHeight);
+        // Configurazione ottimizzata in un blocco
+        armorStand.setVisible(false);
+        armorStand.setGravity(false);
+        armorStand.setCanPickupItems(false);
+        armorStand.setCustomNameVisible(true);
+        armorStand.setMarker(true);
+        armorStand.setSilent(true);
+        armorStand.setInvulnerable(true);
+        armorStand.setBasePlate(false);
+        armorStand.setArms(false);
+        armorStand.setSmall(true);
 
-        // Crea l'armor stand
-        ArmorStand armorStand = (ArmorStand) player.getWorld().spawnEntity(armorStandLocation, EntityType.ARMOR_STAND);
-
-        // Configura l'armor stand
-        armorStand.setVisible(false); // Invisibile
-        armorStand.setGravity(false); // Non cade
-        armorStand.setCanPickupItems(false); // Non raccoglie oggetti
-        armorStand.setCustomNameVisible(true); // Nome personalizzato visibile
-        armorStand.setMarker(true); // Marker (non ha hitbox)
-        armorStand.setSilent(true); // Silenzioso
-        armorStand.setInvulnerable(true); // Invulnerabile
-        armorStand.setBasePlate(false); // Nessuna base
-        armorStand.setArms(false); // Nessun braccio
-        armorStand.setSmall(true); // Piccolo per meno impatto visivo
-
-        // Salva l'armor stand nella mappa
-        playerArmorStands.put(uuid, armorStand);
+        return armorStand;
     }
 
     private void restorePlayer(Player player) {
         UUID uuid = player.getUniqueId();
+        PlayerData data = playerData.get(uuid);
 
-        // Rimuovi l'armor stand
-        ArmorStand armorStand = playerArmorStands.get(uuid);
-        if (armorStand != null && !armorStand.isDead()) {
-            armorStand.remove();
+        if (data != null) {
+            player.setDisplayName(data.originalName);
+            player.setPlayerListName(data.originalName);
         }
-
-        // Rimuovi dal team per ripristinare la nametag originale
-        String teamName = "rn_" + uuid.toString().substring(0, 8);
-        Team team = scoreboard.getTeam(teamName);
-        if (team != null) {
-            team.removeEntry(player.getName());
-            team.unregister();
-        }
-
-        // Ripristina i nomi originali
-        String originalName = originalNames.get(uuid);
-        if (originalName != null) {
-            player.setDisplayName(originalName);
-            player.setPlayerListName(originalName);
-        } else {
-            // Fallback al nome corrente del giocatore
-            player.setDisplayName(player.getName());
-            player.setPlayerListName(player.getName());
-        }
-
-        // Rimuovi dalle mappe
-        playerArmorStands.remove(uuid);
-        lastArmorStandName.remove(uuid);
-        lastTabName.remove(uuid);
     }
 
-    private void startAnimation() {
-        if (animationTask != null && !animationTask.isCancelled()) {
-            animationTask.cancel();
-        }
+    private void startTasks() {
+        startAnimationTask();
+        startPositionTask();
+    }
 
+    private void startAnimationTask() {
         animationTask = new BukkitRunnable() {
             @Override
             public void run() {
-                for (Player player : Bukkit.getOnlinePlayers()) {
-                    if (player.hasPermission(PERMISSION) && playerColorIndex.containsKey(player.getUniqueId())) {
-                        updatePlayerColor(player);
+                // Aggiorna solo i giocatori con permesso
+                for (UUID uuid : permittedPlayers) {
+                    PlayerData data = playerData.get(uuid);
+                    if (data != null) {
+                        updatePlayerColor(uuid, data);
                     }
                 }
             }
         };
 
-        // Usa la velocità configurata
         animationTask.runTaskTimer(this, 0L, animationSpeed);
-        getLogger().info("Animazione arcobaleno avviata con velocità: " + animationSpeed + " ticks");
     }
 
-    private void startPositionUpdater() {
-        if (positionTask != null && !positionTask.isCancelled()) {
-            positionTask.cancel();
-        }
-
+    private void startPositionTask() {
         positionTask = new BukkitRunnable() {
             @Override
             public void run() {
-                for (Map.Entry<UUID, ArmorStand> entry : playerArmorStands.entrySet()) {
-                    UUID uuid = entry.getKey();
-                    ArmorStand armorStand = entry.getValue();
+                // Batch update delle posizioni
+                List<UUID> toRemove = new ArrayList<>();
 
+                for (Map.Entry<UUID, PlayerData> entry : playerData.entrySet()) {
+                    UUID uuid = entry.getKey();
+                    PlayerData data = entry.getValue();
                     Player player = Bukkit.getPlayer(uuid);
 
-                    if (player != null && player.isOnline() && armorStand != null && !armorStand.isDead()) {
-                        // Aggiorna la posizione dell'armor stand
-                        Location playerLocation = player.getLocation();
-                        Location armorStandLocation = armorStand.getLocation();
+                    if (player == null || !player.isOnline()) {
+                        toRemove.add(uuid);
+                        continue;
+                    }
 
-                        // Solo se il giocatore si è mosso significativamente
-                        if (playerLocation.distance(armorStandLocation) > 0.1) {
-                            Location newLocation = playerLocation.clone();
-                            newLocation.setY(newLocation.getY() + nametagHeight);
-                            armorStand.teleport(newLocation);
-                        }
-                    } else if (armorStand != null && !armorStand.isDead()) {
-                        // Rimuovi armor stand orfani
-                        armorStand.remove();
-                        playerArmorStands.remove(uuid);
+                    if (data.armorStand == null || data.armorStand.isDead()) {
+                        toRemove.add(uuid);
+                        continue;
+                    }
+
+                    // Aggiorna solo se necessario
+                    Location playerLoc = player.getLocation();
+                    if (shouldUpdatePosition(playerLoc, data.lastLocation)) {
+                        Location newLoc = playerLoc.clone();
+                        newLoc.setY(newLoc.getY() + nametagHeight);
+                        data.armorStand.teleport(newLoc);
+                        data.lastLocation = playerLoc;
                     }
                 }
+
+                // Rimuovi giocatori non validi
+                toRemove.forEach(uuid -> {
+                    PlayerData data = playerData.remove(uuid);
+                    if (data != null && data.armorStand != null && !data.armorStand.isDead()) {
+                        data.armorStand.remove();
+                    }
+                    permittedPlayers.remove(uuid);
+                });
             }
         };
 
-        // Aggiorna le posizioni ogni 2 ticks (più frequente per fluidità)
         positionTask.runTaskTimer(this, 0L, 2L);
-        getLogger().info("Aggiornamento posizioni armor stand avviato");
     }
 
-    private void startCacheCleanup() {
-        if (cacheCleanupTask != null && !cacheCleanupTask.isCancelled()) {
-            cacheCleanupTask.cancel();
-        }
-
-        cacheCleanupTask = new BukkitRunnable() {
-            @Override
-            public void run() {
-                cleanupCache();
-                getLogger().info("Cache pulita. Dimensione attuale: " + nameCache.size() + " nomi");
-            }
-        };
-
-        // Converte i secondi in ticks (20 ticks = 1 secondo)
-        cacheCleanupTask.runTaskTimer(this, cacheCleanupInterval * 20L, cacheCleanupInterval * 20L);
-        getLogger().info("Task di pulizia cache avviato (ogni " + cacheCleanupInterval + " secondi)");
+    private boolean shouldUpdatePosition(Location current, Location last) {
+        return last == null ||
+                current.getWorld() != last.getWorld() ||
+                current.distanceSquared(last) > positionThreshold * positionThreshold;
     }
 
-    private void updatePlayerColor(Player player) {
-        UUID uuid = player.getUniqueId();
+    private void updatePlayerColor(UUID uuid, PlayerData data) {
+        Player player = Bukkit.getPlayer(uuid);
+        if (player == null || !player.isOnline()) return;
 
-        if (!playerColorIndex.containsKey(uuid)) {
-            return;
+        String[] cachedNames = nameCache.get(data.originalName);
+        if (cachedNames == null) return;
+
+        String rainbowName = cachedNames[data.colorIndex];
+
+        // Aggiorna solo se cambiato
+        if (!rainbowName.equals(data.lastArmorStandName)) {
+            data.armorStand.setCustomName(rainbowName);
+            data.lastArmorStandName = rainbowName;
         }
 
-        String originalName = originalNames.get(uuid);
-        if (originalName == null) {
-            return;
-        }
-
-        ArmorStand armorStand = playerArmorStands.get(uuid);
-        if (armorStand == null || armorStand.isDead()) {
-            return;
-        }
-
-        // Ottieni l'indice corrente del colore
-        int colorIndex = playerColorIndex.get(uuid);
-
-        // Usa la cache per ottenere il nome arcobaleno
-        String rainbowName = getCachedRainbowName(originalName, colorIndex);
-
-        // Aggiorna solo se il nome è cambiato (ottimizzazione)
-        String lastArmorName = lastArmorStandName.get(uuid);
-        if (!rainbowName.equals(lastArmorName)) {
-            armorStand.setCustomName(rainbowName);
-            lastArmorStandName.put(uuid, rainbowName);
-        }
-
-        // Mantieni il nome originale per la chat
-        player.setDisplayName(originalNames.get(uuid));
-
-        // Usa la cache anche per il nome della TAB
-        String lastTab = lastTabName.get(uuid);
-        if (!rainbowName.equals(lastTab)) {
+        if (!rainbowName.equals(data.lastTabName)) {
             player.setPlayerListName(rainbowName);
-            lastTabName.put(uuid, rainbowName);
+            data.lastTabName = rainbowName;
         }
 
-        // Incrementa l'indice del colore per il prossimo aggiornamento
-        playerColorIndex.put(uuid, (colorIndex + 1) % RAINBOW_COLORS.length);
-    }
+        // Mantieni nome originale per chat
+        player.setDisplayName(data.originalName);
 
-    private void cleanupCache() {
-        // Rimuovi i nomi dalla cache che non corrispondono a giocatori online
-        nameCache.entrySet().removeIf(entry -> {
-            String playerName = entry.getKey();
-            return Bukkit.getPlayer(playerName) == null;
-        });
-
-        // Se la cache è ancora troppo grande, rimuovi le voci più vecchie
-        if (nameCache.size() > cacheSize * 0.8) { // Mantieni all'80% della dimensione massima
-            int toRemove = nameCache.size() - (int)(cacheSize * 0.8);
-            nameCache.entrySet().stream()
-                    .limit(toRemove)
-                    .map(Map.Entry::getKey)
-                    .forEach(nameCache::remove);
-        }
-    }
-
-    private void clearCache() {
-        nameCache.clear();
-        lastArmorStandName.clear();
-        lastTabName.clear();
-        getLogger().info("Cache completamente pulita");
+        // Incrementa indice
+        data.colorIndex = (data.colorIndex + 1) % RAINBOW_COLORS.length;
     }
 
     private void cleanupOldTeams() {
-        try {
-            // Rimuovi tutti i team rainbow esistenti
-            for (Team team : scoreboard.getTeams()) {
-                if (team.getName().startsWith("rainbow_") || team.getName().startsWith("rn_")) {
-                    team.unregister();
-                }
-            }
-        } catch (Exception e) {
-            getLogger().warning("Errore durante la pulizia dei team: " + e.getMessage());
-        }
-    }
-
-    // Metodi per statistiche della cache (utili per debug)
-    public int getCacheSize() {
-        return nameCache.size();
-    }
-
-    public void printCacheStats() {
-        getLogger().info("=== STATISTICHE CACHE ===");
-        getLogger().info("Nomi cachati: " + nameCache.size() + "/" + cacheSize);
-        getLogger().info("Memoria utilizzata (approssimativa): " + (nameCache.size() * RAINBOW_COLORS.length * 50) + " bytes");
-        getLogger().info("========================");
+        scoreboard.getTeams().stream()
+                .filter(team -> team.getName().startsWith("rn_") || team.getName().startsWith("rainbow_"))
+                .forEach(Team::unregister);
     }
 }

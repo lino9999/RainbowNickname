@@ -1,8 +1,9 @@
-# RainbowNickname Plugin Configuration
+# RainbowNickname Plugin Configuration - Optimized Version
 
 # Rainbow animation speed (in ticks)
 # 20 ticks = 1 second
-# Lower values = faster animation
+# Lower values = faster animation, but more CPU usage
+# Recommended: 10-20 for balance between smoothness and performance
 animation-speed: 10
 
 # Use bold text for names
@@ -11,3 +12,26 @@ use-bold: true
 # Nametag height above the player (in blocks)
 # 2.3 is the standard height of a Minecraft nametag
 nametag-height: 2.3
+
+# Position update threshold (in blocks)
+# Only update armor stand position if player moved more than this distance
+# Lower values = smoother movement but more CPU usage
+position-threshold: 0.1
+
+# Use asynchronous tasks for heavy operations
+# Improves performance by using separate threads
+use-async-tasks: true
+
+# Cache configuration
+cache:
+  # Maximum number of player names to cache
+  # Each cached name uses ~1KB of memory
+  max-size: 1000
+
+# Performance tuning (Advanced users only)
+performance:
+  # Batch size for bulk operations
+  batch-size: 50
+
+  # Enable debug logging
+  debug: false

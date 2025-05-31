@@ -1,11 +1,16 @@
 name: RainbowNickname
-version: 1.1.0
+version: 1.5
 api-version: '1.21'
 main: com.Lino.rainbowNickname.RainbowNickname
-author: YourName
+author: Lino
 description: Plugin che aggiunge nickname animati con effetto arcobaleno
 
 permissions:
   rainbownick.use:
-    description: Permesso per avere il nickname animato arcobaleno
+    description: Permission to have animated rainbow nickname
     default: op
+  rainbownick.admin:
+    description: Permission to manage the plugin
+    default: op
+    children:
+      rainbownick.use: true
