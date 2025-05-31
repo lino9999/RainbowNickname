@@ -5,16 +5,31 @@
 # Valori consigliati: 2-8
 animation-speed: 4
 
+# Usa testo in grassetto per i nickname
+# true = nickname in grassetto (&l)
+# false = nickname normale
+use-bold: true
+
+# Transizione fluida tra i colori
+# true = transizione più graduale
+# false = cambio colore standard
+smooth-transition: true
+
 # Messaggio di benvenuto quando un giocatore con permesso entra
 # Imposta a '' per disabilitare
 welcome-message: '&aIl tuo nickname arcobaleno è attivo!'
 
 # Configurazione colori (per future versioni)
 # colors:
+#   - DARK_RED
 #   - RED
 #   - GOLD
 #   - YELLOW
 #   - GREEN
+#   - DARK_GREEN
 #   - AQUA
+#   - DARK_AQUA
 #   - BLUE
+#   - DARK_BLUE
 #   - LIGHT_PURPLE
+#   - DARK_PURPLE

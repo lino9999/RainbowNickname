@@ -1,4 +1,4 @@
-package com.example.rainbownickname;
+package com.Lino.rainbowNickname;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
