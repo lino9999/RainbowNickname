@@ -1,25 +1,21 @@
 # RainbowNickname Configuration
 #
-# Velocità dell'animazione in tick (20 tick = 1 secondo)
-# Valori più bassi = animazione più veloce
-# Valori consigliati: 2-8
+# Animation speed in ticks (20 ticks = 1 second)
+# Lower values = faster animation
+# Recommended values: 2-8
 animation-speed: 4
 
-# Usa testo in grassetto per i nickname
-# true = nickname in grassetto (&l)
-# false = nickname normale
+# Use bold text for nicknames
+# true = bold nickname (&l)
+# false = normal nickname
 use-bold: true
 
-# Transizione fluida tra i colori
-# true = transizione più graduale
-# false = cambio colore standard
+# Smooth transition between colors
+# true = smoother transition
+# false = standard color change
 smooth-transition: true
 
-# Messaggio di benvenuto quando un giocatore con permesso entra
-# Imposta a '' per disabilitare
-welcome-message: '&aIl tuo nickname arcobaleno è attivo!'
-
-# Configurazione colori (per future versioni)
+# Color configuration (for future versions)
 # colors:
 #   - DARK_RED
 #   - RED
