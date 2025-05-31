@@ -20,6 +20,7 @@ import org.bukkit.scoreboard.Team;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class RainbowNickname extends JavaPlugin implements Listener {
 
@@ -30,12 +31,20 @@ public class RainbowNickname extends JavaPlugin implements Listener {
     private final Map<UUID, String> originalNames = new HashMap<>();
     private final Map<UUID, ArmorStand> playerArmorStands = new HashMap<>();
 
+    // Sistema di cache per i nomi colorati
+    private final Map<String, String[]> nameCache = new ConcurrentHashMap<>();
+    private final Map<UUID, String> lastArmorStandName = new HashMap<>();
+    private final Map<UUID, String> lastTabName = new HashMap<>();
+
     private BukkitRunnable animationTask;
     private BukkitRunnable positionTask;
+    private BukkitRunnable cacheCleanupTask;
     private Scoreboard scoreboard;
     private int animationSpeed;
     private boolean useBold;
     private double nametagHeight;
+    private int cacheSize;
+    private long cacheCleanupInterval;
 
     @Override
     public void onEnable() {
@@ -64,9 +73,10 @@ public class RainbowNickname extends JavaPlugin implements Listener {
             // Avvia le animazioni dopo aver configurato i giocatori
             startAnimation();
             startPositionUpdater();
+            startCacheCleanup();
         }, 20L); // 1 secondo di delay
 
-        getLogger().info("RainbowNickname abilitato con Armor Stands!");
+        getLogger().info("RainbowNickname abilitato con Armor Stands e Cache ottimizzata!");
     }
 
     private void loadConfiguration() {
@@ -78,6 +88,10 @@ public class RainbowNickname extends JavaPlugin implements Listener {
 
         // Carica l'altezza della nametag
         nametagHeight = getConfig().getDouble("nametag-height", 2.3);
+
+        // Configurazioni per la cache
+        cacheSize = getConfig().getInt("cache.max-size", 1000);
+        cacheCleanupInterval = getConfig().getLong("cache.cleanup-interval", 300); // 5 minuti in secondi
 
         // Carica i colori
         RAINBOW_COLORS = new ChatColor[]{
@@ -100,14 +114,18 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         if (positionTask != null && !positionTask.isCancelled()) {
             positionTask.cancel();
         }
+        if (cacheCleanupTask != null && !cacheCleanupTask.isCancelled()) {
+            cacheCleanupTask.cancel();
+        }
 
         // Ripristina i nomi originali e rimuovi armor stands
         for (Player player : Bukkit.getOnlinePlayers()) {
             restorePlayer(player);
         }
 
-        // Pulisci i team
+        // Pulisci i team e la cache
         cleanupOldTeams();
+        clearCache();
 
         getLogger().info("RainbowNickname disabilitato!");
     }
@@ -139,6 +157,8 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         playerColorIndex.remove(uuid);
         originalNames.remove(uuid);
         playerArmorStands.remove(uuid);
+        lastArmorStandName.remove(uuid);
+        lastTabName.remove(uuid);
 
         // Rimuovi dal team per nascondere la nametag originale
         String teamName = "rn_" + uuid.toString().substring(0, 8);
@@ -179,6 +199,9 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         // Inizializza l'indice del colore casualmente per varietà
         playerColorIndex.put(uuid, (int) (Math.random() * RAINBOW_COLORS.length));
 
+        // Pre-calcola e cachea i nomi per questo giocatore
+        precachePlayerNames(player.getName());
+
         // Nascondi la nametag originale del giocatore usando un team
         hideOriginalNametag(player);
 
@@ -189,6 +212,49 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         updatePlayerColor(player);
 
         getLogger().info("Configurato giocatore: " + player.getName() + " con armor stand personalizzato");
+    }
+
+    private void precachePlayerNames(String playerName) {
+        if (nameCache.containsKey(playerName)) {
+            return; // Già cachato
+        }
+
+        String[] cachedNames = new String[RAINBOW_COLORS.length];
+
+        // Pre-calcola tutti i possibili offset di colore per questo nome
+        for (int offset = 0; offset < RAINBOW_COLORS.length; offset++) {
+            StringBuilder rainbowName = new StringBuilder();
+            for (int i = 0; i < playerName.length(); i++) {
+                char c = playerName.charAt(i);
+                int colorIndex = (offset + i) % RAINBOW_COLORS.length;
+
+                rainbowName.append(RAINBOW_COLORS[colorIndex]);
+                if (useBold) {
+                    rainbowName.append(ChatColor.BOLD);
+                }
+                rainbowName.append(c);
+            }
+            cachedNames[offset] = rainbowName.toString();
+        }
+
+        nameCache.put(playerName, cachedNames);
+
+        // Controlla se la cache è troppo grande
+        if (nameCache.size() > cacheSize) {
+            cleanupCache();
+        }
+    }
+
+    private String getCachedRainbowName(String playerName, int colorOffset) {
+        String[] cachedNames = nameCache.get(playerName);
+        if (cachedNames == null) {
+            // Se non è cachato, pre-calcolalo
+            precachePlayerNames(playerName);
+            cachedNames = nameCache.get(playerName);
+        }
+
+        int normalizedOffset = colorOffset % RAINBOW_COLORS.length;
+        return cachedNames[normalizedOffset];
     }
 
     private void hideOriginalNametag(Player player) {
@@ -269,6 +335,8 @@ public class RainbowNickname extends JavaPlugin implements Listener {
 
         // Rimuovi dalle mappe
         playerArmorStands.remove(uuid);
+        lastArmorStandName.remove(uuid);
+        lastTabName.remove(uuid);
     }
 
     private void startAnimation() {
@@ -331,6 +399,24 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         getLogger().info("Aggiornamento posizioni armor stand avviato");
     }
 
+    private void startCacheCleanup() {
+        if (cacheCleanupTask != null && !cacheCleanupTask.isCancelled()) {
+            cacheCleanupTask.cancel();
+        }
+
+        cacheCleanupTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                cleanupCache();
+                getLogger().info("Cache pulita. Dimensione attuale: " + nameCache.size() + " nomi");
+            }
+        };
+
+        // Converte i secondi in ticks (20 ticks = 1 secondo)
+        cacheCleanupTask.runTaskTimer(this, cacheCleanupInterval * 20L, cacheCleanupInterval * 20L);
+        getLogger().info("Task di pulizia cache avviato (ogni " + cacheCleanupInterval + " secondi)");
+    }
+
     private void updatePlayerColor(Player player) {
         UUID uuid = player.getUniqueId();
 
@@ -351,43 +437,52 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         // Ottieni l'indice corrente del colore
         int colorIndex = playerColorIndex.get(uuid);
 
-        // Costruisci il nome arcobaleno completo per l'armor stand
-        StringBuilder rainbowName = new StringBuilder();
-        for (int i = 0; i < originalName.length(); i++) {
-            char c = originalName.charAt(i);
-            int currentColorIndex = (colorIndex + i) % RAINBOW_COLORS.length;
+        // Usa la cache per ottenere il nome arcobaleno
+        String rainbowName = getCachedRainbowName(originalName, colorIndex);
 
-            rainbowName.append(RAINBOW_COLORS[currentColorIndex]);
-            if (useBold) {
-                rainbowName.append(ChatColor.BOLD);
-            }
-            rainbowName.append(c);
+        // Aggiorna solo se il nome è cambiato (ottimizzazione)
+        String lastArmorName = lastArmorStandName.get(uuid);
+        if (!rainbowName.equals(lastArmorName)) {
+            armorStand.setCustomName(rainbowName);
+            lastArmorStandName.put(uuid, rainbowName);
         }
-
-        // Aggiorna il nome dell'armor stand
-        armorStand.setCustomName(rainbowName.toString());
 
         // Mantieni il nome originale per la chat
         player.setDisplayName(originalNames.get(uuid));
 
-        // Costruisci il nome arcobaleno per la TAB
-        StringBuilder coloredTabName = new StringBuilder();
-        for (int i = 0; i < originalName.length(); i++) {
-            char c = originalName.charAt(i);
-            int currentColorIndex = (colorIndex + i) % RAINBOW_COLORS.length;
-
-            coloredTabName.append(RAINBOW_COLORS[currentColorIndex]);
-            if (useBold) {
-                coloredTabName.append(ChatColor.BOLD);
-            }
-            coloredTabName.append(c);
+        // Usa la cache anche per il nome della TAB
+        String lastTab = lastTabName.get(uuid);
+        if (!rainbowName.equals(lastTab)) {
+            player.setPlayerListName(rainbowName);
+            lastTabName.put(uuid, rainbowName);
         }
-
-        // Aggiorna il player list name (tab)
-        player.setPlayerListName(coloredTabName.toString());
 
         // Incrementa l'indice del colore per il prossimo aggiornamento
         playerColorIndex.put(uuid, (colorIndex + 1) % RAINBOW_COLORS.length);
+    }
+
+    private void cleanupCache() {
+        // Rimuovi i nomi dalla cache che non corrispondono a giocatori online
+        nameCache.entrySet().removeIf(entry -> {
+            String playerName = entry.getKey();
+            return Bukkit.getPlayer(playerName) == null;
+        });
+
+        // Se la cache è ancora troppo grande, rimuovi le voci più vecchie
+        if (nameCache.size() > cacheSize * 0.8) { // Mantieni all'80% della dimensione massima
+            int toRemove = nameCache.size() - (int)(cacheSize * 0.8);
+            nameCache.entrySet().stream()
+                    .limit(toRemove)
+                    .map(Map.Entry::getKey)
+                    .forEach(nameCache::remove);
+        }
+    }
+
+    private void clearCache() {
+        nameCache.clear();
+        lastArmorStandName.clear();
+        lastTabName.clear();
+        getLogger().info("Cache completamente pulita");
     }
 
     private void cleanupOldTeams() {
@@ -401,5 +496,17 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         } catch (Exception e) {
             getLogger().warning("Errore durante la pulizia dei team: " + e.getMessage());
         }
+    }
+
+    // Metodi per statistiche della cache (utili per debug)
+    public int getCacheSize() {
+        return nameCache.size();
+    }
+
+    public void printCacheStats() {
+        getLogger().info("=== STATISTICHE CACHE ===");
+        getLogger().info("Nomi cachati: " + nameCache.size() + "/" + cacheSize);
+        getLogger().info("Memoria utilizzata (approssimativa): " + (nameCache.size() * RAINBOW_COLORS.length * 50) + " bytes");
+        getLogger().info("========================");
     }
 }
