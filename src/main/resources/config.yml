@@ -1,0 +1,20 @@
+# RainbowNickname Configuration
+#
+# Velocità dell'animazione in tick (20 tick = 1 secondo)
+# Valori più bassi = animazione più veloce
+# Valori consigliati: 2-8
+animation-speed: 4
+
+# Messaggio di benvenuto quando un giocatore con permesso entra
+# Imposta a '' per disabilitare
+welcome-message: '&aIl tuo nickname arcobaleno è attivo!'
+
+# Configurazione colori (per future versioni)
+# colors:
+#   - RED
+#   - GOLD
+#   - YELLOW
+#   - GREEN
+#   - AQUA
+#   - BLUE
+#   - LIGHT_PURPLE
