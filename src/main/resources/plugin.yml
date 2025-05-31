@@ -5,32 +5,7 @@ main: com.Lino.rainbowNickname.RainbowNickname
 author: YourName
 description: Plugin che aggiunge nickname animati con effetto arcobaleno
 
-commands:
-  rainbownick:
-    description: Comando principale di RainbowNickname
-    usage: /<command> [toggle|reload|speed]
-    aliases: [rn, rainbow]
-
 permissions:
   rainbownick.use:
     description: Permesso per avere il nickname animato arcobaleno
-    default: op
-
-  rainbownick.toggle:
-    description: Permesso per attivare/disattivare il proprio nickname arcobaleno
-    default: true
-
-  rainbownick.admin:
-    description: Permesso per i comandi amministrativi
-    default: op
-    children:
-      rainbownick.reload: true
-      rainbownick.speed: true
-
-  rainbownick.reload:
-    description: Permesso per ricaricare il plugin
-    default: op
-
-  rainbownick.speed:
-    description: Permesso per modificare la velocità dell'animazione
     default: op
