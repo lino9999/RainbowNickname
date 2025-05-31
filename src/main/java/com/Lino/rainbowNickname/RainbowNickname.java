@@ -76,11 +76,7 @@ public class RainbowNickname extends JavaPlugin implements Listener {
                 ChatColor.LIGHT_PURPLE
         };
 
-        // Mostra messaggio di benvenuto se configurato
-        String welcomeMessage = getConfig().getString("welcome-message", "");
-        if (!welcomeMessage.isEmpty()) {
-            getLogger().info(ChatColor.translateAlternateColorCodes('&', welcomeMessage));
-        }
+
     }
 
     @Override
@@ -101,19 +97,6 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         getLogger().info("RainbowNickname disabilitato!");
     }
 
-    @EventHandler
-    public void onPlayerJoin(PlayerJoinEvent event) {
-        Player player = event.getPlayer();
-        if (player.hasPermission(PERMISSION)) {
-            setupPlayer(player);
-
-            // Mostra messaggio di benvenuto se configurato
-            String welcomeMessage = getConfig().getString("welcome-message", "");
-            if (!welcomeMessage.isEmpty()) {
-                player.sendMessage(ChatColor.translateAlternateColorCodes('&', welcomeMessage));
-            }
-        }
-    }
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
