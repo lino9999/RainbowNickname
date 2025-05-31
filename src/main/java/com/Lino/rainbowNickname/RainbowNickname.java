@@ -19,23 +19,23 @@ import java.util.UUID;
 public class RainbowNickname extends JavaPlugin implements Listener {
 
     private static final String PERMISSION = "rainbownick.use";
-    private static final ChatColor[] RAINBOW_COLORS = {
-            ChatColor.RED,
-            ChatColor.GOLD,
-            ChatColor.YELLOW,
-            ChatColor.GREEN,
-            ChatColor.AQUA,
-            ChatColor.BLUE,
-            ChatColor.LIGHT_PURPLE
-    };
+    private ChatColor[] RAINBOW_COLORS;
 
     private final Map<UUID, Integer> playerColorIndex = new HashMap<>();
     private final Map<UUID, String> originalNames = new HashMap<>();
     private BukkitRunnable animationTask;
     private Scoreboard scoreboard;
+    private int animationSpeed;
+    private boolean useBold;
 
     @Override
     public void onEnable() {
+        // IMPORTANTE: Salva il config.yml di default se non esiste
+        saveDefaultConfig();
+
+        // Carica le configurazioni
+        loadConfiguration();
+
         // Registra eventi
         getServer().getPluginManager().registerEvents(this, this);
 
@@ -56,6 +56,31 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         }
 
         getLogger().info("RainbowNickname abilitato!");
+    }
+
+    private void loadConfiguration() {
+        // Carica la velocità dell'animazione
+        animationSpeed = getConfig().getInt("animation-speed", 4);
+
+        // Carica l'opzione per il testo in grassetto
+        useBold = getConfig().getBoolean("use-bold", true);
+
+        // Carica i colori (per ora usa quelli di default)
+        RAINBOW_COLORS = new ChatColor[]{
+                ChatColor.RED,
+                ChatColor.GOLD,
+                ChatColor.YELLOW,
+                ChatColor.GREEN,
+                ChatColor.AQUA,
+                ChatColor.BLUE,
+                ChatColor.LIGHT_PURPLE
+        };
+
+        // Mostra messaggio di benvenuto se configurato
+        String welcomeMessage = getConfig().getString("welcome-message", "");
+        if (!welcomeMessage.isEmpty()) {
+            getLogger().info(ChatColor.translateAlternateColorCodes('&', welcomeMessage));
+        }
     }
 
     @Override
@@ -81,6 +106,12 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         Player player = event.getPlayer();
         if (player.hasPermission(PERMISSION)) {
             setupPlayer(player);
+
+            // Mostra messaggio di benvenuto se configurato
+            String welcomeMessage = getConfig().getString("welcome-message", "");
+            if (!welcomeMessage.isEmpty()) {
+                player.sendMessage(ChatColor.translateAlternateColorCodes('&', welcomeMessage));
+            }
         }
     }
 
@@ -152,8 +183,8 @@ public class RainbowNickname extends JavaPlugin implements Listener {
             }
         };
 
-        // Esegui ogni 4 tick (5 volte al secondo) per un'animazione fluida
-        animationTask.runTaskTimer(this, 0L, 4L);
+        // Usa la velocità configurata
+        animationTask.runTaskTimer(this, 0L, animationSpeed);
     }
 
     private void updatePlayerColor(Player player) {
@@ -176,7 +207,14 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         for (int i = 0; i < originalName.length(); i++) {
             char c = originalName.charAt(i);
             int currentColorIndex = (colorIndex + i) % RAINBOW_COLORS.length;
-            coloredName.append(RAINBOW_COLORS[currentColorIndex]).append(c);
+            coloredName.append(RAINBOW_COLORS[currentColorIndex]);
+
+            // Aggiungi grassetto se configurato
+            if (useBold) {
+                coloredName.append(ChatColor.BOLD);
+            }
+
+            coloredName.append(c);
         }
 
         // Aggiorna il team prefix (sopra la testa)
