@@ -1,4 +1,5 @@
 RainbowNickname Plugin per Minecraft Spigot 1.21.5
+
 Un plugin leggero e ottimizzato che aggiunge nickname animati con effetto arcobaleno sopra la testa dei giocatori.
 Caratteristiche
 
@@ -24,6 +25,7 @@ speed <tick>Modifica la velocità dell'animazione (1-20)rainbownick.admin
 Alias disponibili:
 /rn
 /rainbow
+
 
 Permessi
 PermessoDescrizioneDefaultrainbownick.usePermesso per avere il nickname animatoOPrainbownick.togglePermesso per attivare/disattivare il proprio nicknameTuttirainbownick.adminAccesso ai comandi amministrativiOP
