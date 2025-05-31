@@ -22,6 +22,19 @@ position-threshold: 0.1
 # Improves performance by using separate threads
 use-async-tasks: true
 
+# Tab list configuration
+tab-list:
+  # Enable rainbow effect on tab list header and footer
+  enabled: true
+
+  # Tab list header (supports color codes with &)
+  # Leave empty to disable header
+  header: "&lRainbow Server"
+
+  # Tab list footer (supports color codes with &)
+  # Leave empty to disable footer
+  footer: "&7Powered by RainbowNickname"
+
 # Cache configuration
 cache:
   # Maximum number of player names to cache
