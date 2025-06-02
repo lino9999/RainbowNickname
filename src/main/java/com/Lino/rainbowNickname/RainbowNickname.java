@@ -16,6 +16,7 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
+import org.bukkit.event.server.TabCompleteEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scoreboard.Scoreboard;
@@ -47,6 +48,12 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         String lastTabName;
         Location lastLocation;
         final UUID armorStandUUID;
+        String lastPrefix = "";
+        String lastSuffix = "";
+        String originalListName;
+        String cachedPrefix = "";
+        String cachedSuffix = "";
+        Team luckPermsTeam = null;
 
         PlayerData(String originalName, ArmorStand armorStand, int colorIndex) {
             this.originalName = originalName;
@@ -69,9 +76,19 @@ public class RainbowNickname extends JavaPlugin implements Listener {
     // Set per tracciare tutti gli armor stand creati dal plugin
     private final Set<UUID> pluginArmorStands = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
+    // Mappa per salvare i dati originali di TUTTI i giocatori
+    private final Map<UUID, String> originalTabNames = new ConcurrentHashMap<>();
+    private final Map<UUID, Team> originalTeams = new ConcurrentHashMap<>();
+
+    // Cache per i tab name dei giocatori senza permesso
+    private final Map<UUID, String> nonRainbowTabCache = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> lastTabCheck = new ConcurrentHashMap<>();
+
     private BukkitRunnable animationTask;
     private BukkitRunnable positionTask;
     private BukkitRunnable cleanupTask;
+    private BukkitRunnable prefixUpdateTask;
+    private BukkitRunnable nonRainbowUpdateTask;
     private Scoreboard scoreboard;
 
     // Configurazioni
@@ -81,6 +98,11 @@ public class RainbowNickname extends JavaPlugin implements Listener {
     private double positionThreshold;
     private boolean useAsyncTasks;
     private int maxCacheSize;
+    private boolean keepPrefixSuffix;
+    private boolean animatePrefixSuffix;
+    private int luckpermsJoinDelay;
+    private boolean readFromTab;
+    private boolean debugMode;
 
     // Tab list header e footer
     private boolean useTabList;
@@ -115,6 +137,9 @@ public class RainbowNickname extends JavaPlugin implements Listener {
                     for (Player player : Bukkit.getOnlinePlayers()) {
                         if (player.hasPermission(PERMISSION)) {
                             setupPlayer(player);
+                        } else if (keepPrefixSuffix) {
+                            // Forza l'aggiornamento del tab name per mostrare prefix/suffix anche senza permesso
+                            forceUpdateNonRainbowPlayer(player);
                         }
                     }
                     startTasks();
@@ -125,13 +150,19 @@ public class RainbowNickname extends JavaPlugin implements Listener {
                 for (Player player : Bukkit.getOnlinePlayers()) {
                     if (player.hasPermission(PERMISSION)) {
                         setupPlayer(player);
+                    } else if (keepPrefixSuffix) {
+                        // Forza l'aggiornamento del tab name per mostrare prefix/suffix anche senza permesso
+                        forceUpdateNonRainbowPlayer(player);
                     }
                 }
                 startTasks();
             }, 20L);
         }
 
-        getLogger().info("RainbowNickname abilitato - Versione ottimizzata con tab list!");
+        getLogger().info("RainbowNickname abilitato - Versione con supporto prefix/suffix!");
+        getLogger().info("Prefix/Suffix: " + (keepPrefixSuffix ? "ABILITATO per TUTTI i giocatori" : "DISABILITATO"));
+        getLogger().info("Lettura da tab: " + (readFromTab ? "ABILITATO" : "DISABILITATO"));
+        getLogger().info("Delay LuckPerms: " + luckpermsJoinDelay + " ticks");
     }
 
     private void loadConfiguration() {
@@ -141,6 +172,15 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         positionThreshold = getConfig().getDouble("position-threshold", 0.1);
         useAsyncTasks = getConfig().getBoolean("use-async-tasks", true);
         maxCacheSize = getConfig().getInt("cache.max-size", 1000);
+        keepPrefixSuffix = getConfig().getBoolean("keep-prefix-suffix", true);
+        animatePrefixSuffix = getConfig().getBoolean("animate-prefix-suffix", false);
+
+        // LuckPerms settings
+        luckpermsJoinDelay = getConfig().getInt("luckperms.join-delay", 40);
+        readFromTab = getConfig().getBoolean("luckperms.read-from-tab", true);
+
+        // Debug
+        debugMode = getConfig().getBoolean("performance.debug", false);
 
         // Tab list configurazioni
         useTabList = getConfig().getBoolean("tab-list.enabled", true);
@@ -156,6 +196,8 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         if (animationTask != null) animationTask.cancel();
         if (positionTask != null) positionTask.cancel();
         if (cleanupTask != null) cleanupTask.cancel();
+        if (prefixUpdateTask != null) prefixUpdateTask.cancel();
+        if (nonRainbowUpdateTask != null) nonRainbowUpdateTask.cancel();
 
         // Cleanup in batch
         playerData.values().parallelStream().forEach(data -> {
@@ -182,6 +224,10 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         nameCache.clear();
         permittedPlayers.clear();
         pluginArmorStands.clear();
+        originalTabNames.clear();
+        originalTeams.clear();
+        nonRainbowTabCache.clear();
+        lastTabCheck.clear();
 
         getLogger().info("RainbowNickname disabilitato!");
     }
@@ -197,12 +243,49 @@ public class RainbowNickname extends JavaPlugin implements Listener {
 
                 reloadPlugin(sender);
                 return true;
+            } else if (args.length > 0 && args[0].equalsIgnoreCase("debug") && sender instanceof Player) {
+                if (!sender.hasPermission(ADMIN_PERMISSION)) {
+                    sender.sendMessage(ChatColor.RED + "Non hai il permesso per usare il debug!");
+                    return true;
+                }
+
+                Player player = (Player) sender;
+                sender.sendMessage(ChatColor.GOLD + "=== RainbowNickname Debug ===");
+                sender.sendMessage(ChatColor.YELLOW + "PlayerListName: " + ChatColor.WHITE + player.getPlayerListName());
+
+                // Mostra tutti i team
+                sender.sendMessage(ChatColor.YELLOW + "Teams:");
+                for (Team team : scoreboard.getTeams()) {
+                    if (team.hasEntry(player.getName())) {
+                        sender.sendMessage(ChatColor.AQUA + "  - " + team.getName() +
+                                " Prefix: '" + team.getPrefix() +
+                                "' Suffix: '" + team.getSuffix() + "'");
+                    }
+                }
+
+                // Mostra i dati cached
+                PlayerData data = playerData.get(player.getUniqueId());
+                if (data != null) {
+                    sender.sendMessage(ChatColor.YELLOW + "Cached data:");
+                    sender.sendMessage(ChatColor.AQUA + "  - Original listName: " + data.originalListName);
+                    sender.sendMessage(ChatColor.AQUA + "  - Cached prefix: '" + data.cachedPrefix + "'");
+                    sender.sendMessage(ChatColor.AQUA + "  - Cached suffix: '" + data.cachedSuffix + "'");
+                }
+
+                // Test getPrefixSuffix
+                String[] prefixSuffix = getPrefixSuffix(player);
+                sender.sendMessage(ChatColor.YELLOW + "getPrefixSuffix result:");
+                sender.sendMessage(ChatColor.AQUA + "  - Prefix: '" + prefixSuffix[0] + "'");
+                sender.sendMessage(ChatColor.AQUA + "  - Suffix: '" + prefixSuffix[1] + "'");
+
+                return true;
             }
 
             // Mostra help
             sender.sendMessage(ChatColor.GOLD + "=== RainbowNickname Help ===");
             if (sender.hasPermission(ADMIN_PERMISSION)) {
                 sender.sendMessage(ChatColor.YELLOW + "/rainbownick reload" + ChatColor.WHITE + " - Ricarica il plugin");
+                sender.sendMessage(ChatColor.YELLOW + "/rainbownick debug" + ChatColor.WHITE + " - Mostra info debug (solo player)");
             }
             return true;
         }
@@ -216,6 +299,8 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         if (animationTask != null) animationTask.cancel();
         if (positionTask != null) positionTask.cancel();
         if (cleanupTask != null) cleanupTask.cancel();
+        if (prefixUpdateTask != null) prefixUpdateTask.cancel();
+        if (nonRainbowUpdateTask != null) nonRainbowUpdateTask.cancel();
 
         // Rimuovi tutti gli armor stand
         for (PlayerData data : playerData.values()) {
@@ -238,6 +323,10 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         nameCache.clear();
         permittedPlayers.clear();
         pluginArmorStands.clear();
+        originalTabNames.clear();
+        originalTeams.clear();
+        nonRainbowTabCache.clear();
+        lastTabCheck.clear();
 
         // Ricarica configurazione
         reloadConfig();
@@ -260,9 +349,53 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         sender.sendMessage(ChatColor.GREEN + "RainbowNickname ricaricato con successo!");
     }
 
-    @EventHandler(priority = EventPriority.MONITOR)
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlayerJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
+        UUID uuid = player.getUniqueId();
+
+        // Task immediato per catturare il tab name APPENA possibile
+        Bukkit.getScheduler().runTask(this, () -> {
+            if (player.isOnline()) {
+                String immediateTabName = player.getPlayerListName();
+                if (immediateTabName != null && !immediateTabName.equals(player.getName())) {
+                    originalTabNames.put(uuid, immediateTabName);
+
+                    if (debugMode) {
+                        getLogger().info("[DEBUG] Captured immediate tab name for " + player.getName() + ": " + immediateTabName);
+                    }
+                }
+            }
+        });
+
+        // Salva SEMPRE il tab name originale per TUTTI i giocatori
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (player.isOnline()) {
+                String currentTabName = player.getPlayerListName();
+                // Sovrascrivi solo se è migliore del precedente
+                if (currentTabName != null && !currentTabName.equals(player.getName())) {
+                    originalTabNames.put(uuid, currentTabName);
+                }
+
+                // Salva anche il team originale
+                for (Team team : scoreboard.getTeams()) {
+                    if (!team.getName().startsWith("rn_") && team.hasEntry(player.getName())) {
+                        originalTeams.put(uuid, team);
+
+                        if (debugMode) {
+                            getLogger().info("[DEBUG] Saved team for " + player.getName() + ": " + team.getName());
+                            getLogger().info("[DEBUG] Team prefix: '" + team.getPrefix() + "' suffix: '" + team.getSuffix() + "'");
+                        }
+                        break;
+                    }
+                }
+
+                if (debugMode) {
+                    getLogger().info("[DEBUG] Saved original data for " + player.getName());
+                    getLogger().info("[DEBUG] Original tab name: " + currentTabName);
+                }
+            }
+        }, luckpermsJoinDelay - 20); // Un po' prima del setup normale
 
         // Check asincrono del permesso
         if (useAsyncTasks) {
@@ -271,20 +404,31 @@ public class RainbowNickname extends JavaPlugin implements Listener {
                     // Pre-cache il nome
                     precachePlayerNames(player.getName());
 
-                    // Setup sul thread principale
+                    // Setup sul thread principale con delay configurabile per LuckPerms
                     Bukkit.getScheduler().runTaskLater(this, () -> {
                         if (player.isOnline()) {
                             setupPlayer(player);
                         }
-                    }, 10L);
+                    }, luckpermsJoinDelay);
+                } else if (keepPrefixSuffix) {
+                    // Forza l'update per i giocatori senza permesso
+                    Bukkit.getScheduler().runTaskLater(this, () -> {
+                        if (player.isOnline()) {
+                            forceUpdateNonRainbowPlayer(player);
+                        }
+                    }, luckpermsJoinDelay + 10); // Poco dopo LuckPerms
                 }
             });
         } else {
             Bukkit.getScheduler().runTaskLater(this, () -> {
-                if (player.isOnline() && player.hasPermission(PERMISSION)) {
-                    setupPlayer(player);
+                if (player.isOnline()) {
+                    if (player.hasPermission(PERMISSION)) {
+                        setupPlayer(player);
+                    } else if (keepPrefixSuffix) {
+                        forceUpdateNonRainbowPlayer(player);
+                    }
                 }
-            }, 10L);
+            }, luckpermsJoinDelay);
         }
     }
 
@@ -309,6 +453,10 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         }
 
         permittedPlayers.remove(uuid);
+        originalTabNames.remove(uuid);
+        originalTeams.remove(uuid);
+        nonRainbowTabCache.remove(uuid);
+        lastTabCheck.remove(uuid);
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -381,8 +529,17 @@ public class RainbowNickname extends JavaPlugin implements Listener {
     }
 
     private void setupPlayer(Player player) {
+        setupPlayer(player, null);
+    }
+
+    private void setupPlayer(Player player, String savedOriginalListName) {
         UUID uuid = player.getUniqueId();
         String name = player.getName();
+
+        if (debugMode) {
+            getLogger().info("[DEBUG] Setting up player: " + name);
+            getLogger().info("[DEBUG] Current playerListName: " + player.getPlayerListName());
+        }
 
         // Rimuovi eventuali dati precedenti
         PlayerData oldData = playerData.get(uuid);
@@ -396,6 +553,25 @@ public class RainbowNickname extends JavaPlugin implements Listener {
             precachePlayerNames(name);
         }
 
+        // Prima di nascondere il nametag, salva il team di LuckPerms
+        Team luckPermsTeam = null;
+        String savedPrefix = "";
+        String savedSuffix = "";
+
+        for (Team team : scoreboard.getTeams()) {
+            if (!team.getName().startsWith("rn_") && team.hasEntry(player.getName())) {
+                luckPermsTeam = team;
+                savedPrefix = team.getPrefix();
+                savedSuffix = team.getSuffix();
+
+                if (debugMode) {
+                    getLogger().info("[DEBUG] Found LuckPerms team before hiding: " + team.getName());
+                    getLogger().info("[DEBUG] Prefix: '" + savedPrefix + "' Suffix: '" + savedSuffix + "'");
+                }
+                break;
+            }
+        }
+
         // Nascondi nametag originale
         hideOriginalNametag(player);
 
@@ -405,6 +581,24 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         // Crea e salva PlayerData
         int startIndex = (int) (Math.random() * RAINBOW_COLORS.length);
         PlayerData data = new PlayerData(name, armorStand, startIndex);
+
+        // Usa il tab name salvato se disponibile
+        String tabNameToUse = originalTabNames.get(uuid);
+        if (tabNameToUse == null) {
+            tabNameToUse = player.getPlayerListName();
+        }
+        data.originalListName = tabNameToUse;
+
+        // Salva prefix e suffix trovati
+        data.cachedPrefix = savedPrefix;
+        data.cachedSuffix = savedSuffix;
+        data.luckPermsTeam = luckPermsTeam;
+
+        if (debugMode && keepPrefixSuffix) {
+            getLogger().info("[DEBUG] Cached prefix: '" + data.cachedPrefix + "'");
+            getLogger().info("[DEBUG] Cached suffix: '" + data.cachedSuffix + "'");
+        }
+
         playerData.put(uuid, data);
         permittedPlayers.add(uuid);
         pluginArmorStands.add(armorStand.getUniqueId());
@@ -487,7 +681,12 @@ public class RainbowNickname extends JavaPlugin implements Listener {
 
         if (data != null) {
             player.setDisplayName(data.originalName);
-            player.setPlayerListName(data.originalName);
+            // Ripristina il playerListName originale se salvato
+            if (data.originalListName != null) {
+                player.setPlayerListName(data.originalListName);
+            } else {
+                player.setPlayerListName(data.originalName);
+            }
         }
     }
 
@@ -495,13 +694,17 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         startAnimationTask();
         startPositionTask();
         startCleanupTask();
+        if (keepPrefixSuffix) {
+            startPrefixUpdateTask();
+            startNonRainbowUpdateTask();
+        }
     }
 
     private void startAnimationTask() {
         animationTask = new BukkitRunnable() {
             @Override
             public void run() {
-                // Aggiorna solo i giocatori con permesso
+                // Aggiorna SOLO i giocatori con permesso rainbow
                 for (UUID uuid : permittedPlayers) {
                     PlayerData data = playerData.get(uuid);
                     if (data != null) {
@@ -516,6 +719,7 @@ public class RainbowNickname extends JavaPlugin implements Listener {
             }
         };
 
+        // Usa sempre animationSpeed per l'animazione
         animationTask.runTaskTimer(this, 0L, animationSpeed);
     }
 
@@ -608,10 +812,209 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         cleanupTask.runTaskTimer(this, 100L, 100L); // Ogni 5 secondi
     }
 
+    private void startNonRainbowUpdateTask() {
+        nonRainbowUpdateTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                long currentTime = System.currentTimeMillis();
+
+                // Controlla solo i giocatori senza permesso
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    if (!player.hasPermission(PERMISSION)) {
+                        UUID uuid = player.getUniqueId();
+
+                        // Controlla solo se non l'abbiamo controllato di recente
+                        Long lastCheck = lastTabCheck.get(uuid);
+                        if (lastCheck == null || currentTime - lastCheck > 2000) { // Ogni 2 secondi massimo
+
+                            // Trova il team del giocatore
+                            String expectedPrefix = "";
+                            String expectedSuffix = "";
+
+                            for (Team team : scoreboard.getTeams()) {
+                                if (!team.getName().startsWith("rn_") && team.hasEntry(player.getName())) {
+                                    expectedPrefix = team.getPrefix();
+                                    expectedSuffix = team.getSuffix();
+                                    break;
+                                }
+                            }
+
+                            // Se ha un prefix/suffix
+                            if (!expectedPrefix.isEmpty() || !expectedSuffix.isEmpty()) {
+                                String expectedTabName = expectedPrefix + player.getName() + expectedSuffix;
+                                String cachedTabName = nonRainbowTabCache.get(uuid);
+
+                                // Controlla solo se è cambiato rispetto alla cache
+                                if (!expectedTabName.equals(cachedTabName)) {
+                                    String currentTabName = player.getPlayerListName();
+
+                                    // Se non corrisponde, aggiornalo
+                                    if (!expectedTabName.equals(currentTabName)) {
+                                        player.setPlayerListName(expectedTabName);
+
+                                        if (debugMode) {
+                                            getLogger().info("[DEBUG] Updated tab name for " + player.getName());
+                                        }
+                                    }
+
+                                    // Aggiorna la cache
+                                    nonRainbowTabCache.put(uuid, expectedTabName);
+                                }
+                            }
+
+                            // Aggiorna il timestamp dell'ultimo controllo
+                            lastTabCheck.put(uuid, currentTime);
+                        }
+                    }
+                }
+            }
+        };
+
+        // Esegui ogni 10 tick (0.5 secondi) invece che ogni tick
+        nonRainbowUpdateTask.runTaskTimer(this, 20L, 10L);
+    }
+
+    private void startPrefixUpdateTask() {
+        prefixUpdateTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                // Controlla e aggiorna i prefix/suffix per TUTTI i giocatori online
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    UUID uuid = player.getUniqueId();
+
+                    // Se il giocatore ha il permesso rainbow, gestiscilo normalmente
+                    if (permittedPlayers.contains(uuid)) {
+                        PlayerData data = playerData.get(uuid);
+                        if (data != null) {
+                            // Controlla se il team di LuckPerms è cambiato
+                            boolean foundLuckPermsTeam = false;
+
+                            for (Team team : scoreboard.getTeams()) {
+                                if (!team.getName().startsWith("rn_") && team.hasEntry(player.getName())) {
+                                    String currentPrefix = team.getPrefix();
+                                    String currentSuffix = team.getSuffix();
+
+                                    // Se sono cambiati, aggiorna la cache
+                                    if (!currentPrefix.equals(data.cachedPrefix) || !currentSuffix.equals(data.cachedSuffix)) {
+                                        data.cachedPrefix = currentPrefix;
+                                        data.cachedSuffix = currentSuffix;
+                                        data.lastTabName = ""; // Forza aggiornamento
+
+                                        if (debugMode) {
+                                            getLogger().info("[DEBUG] Prefix/suffix changed for " + player.getName());
+                                            getLogger().info("[DEBUG] New prefix: '" + currentPrefix + "' suffix: '" + currentSuffix + "'");
+                                        }
+                                    }
+
+                                    foundLuckPermsTeam = true;
+                                    break;
+                                }
+                            }
+
+                            // Se non trovato nessun team LuckPerms ma aveva prefix cached, resetta
+                            if (!foundLuckPermsTeam && (!data.cachedPrefix.isEmpty() || !data.cachedSuffix.isEmpty())) {
+                                if (debugMode) {
+                                    getLogger().info("[DEBUG] Lost LuckPerms team for " + player.getName() + ", checking displayName");
+                                }
+
+                                // Prova a recuperare dal display name
+                                String displayName = player.getDisplayName();
+                                if (!displayName.equals(player.getName())) {
+                                    String playerName = player.getName();
+                                    int nameIndex = displayName.indexOf(playerName);
+
+                                    if (nameIndex > 0) {
+                                        data.cachedPrefix = displayName.substring(0, nameIndex);
+                                    } else {
+                                        data.cachedPrefix = "";
+                                    }
+
+                                    if (nameIndex >= 0 && nameIndex + playerName.length() < displayName.length()) {
+                                        data.cachedSuffix = displayName.substring(nameIndex + playerName.length());
+                                    } else {
+                                        data.cachedSuffix = "";
+                                    }
+
+                                    data.lastTabName = ""; // Forza aggiornamento
+                                }
+                            }
+                        }
+                    } else if (keepPrefixSuffix) {
+                        // Per i giocatori senza permesso rainbow, aggiorna comunque il loro tab name
+                        forceUpdateNonRainbowPlayer(player);
+                    }
+                }
+            }
+        };
+
+        // Esegui ogni 2 secondi per catturare i cambiamenti di LuckPerms
+        prefixUpdateTask.runTaskTimer(this, 60L, 40L);
+    }
+
     private boolean shouldUpdatePosition(Location current, Location last) {
         return last == null ||
                 current.getWorld() != last.getWorld() ||
                 current.distanceSquared(last) > positionThreshold * positionThreshold;
+    }
+
+    // Metodo per ottenere prefix e suffix dal team del giocatore
+    private String[] getPrefixSuffix(Player player) {
+        String prefix = "";
+        String suffix = "";
+
+        // Cerca nel team del giocatore (escludendo i nostri team rn_)
+        for (Team team : scoreboard.getTeams()) {
+            // Salta i team creati da questo plugin
+            if (team.getName().startsWith("rn_")) {
+                continue;
+            }
+
+            if (team.hasEntry(player.getName())) {
+                prefix = team.getPrefix();
+                suffix = team.getSuffix();
+
+                if (debugMode) {
+                    getLogger().info("[DEBUG] Found team: " + team.getName() + " with prefix: '" + prefix + "' suffix: '" + suffix + "'");
+                }
+                break;
+            }
+        }
+
+        // Se non trovato, prova con il display name
+        if (prefix.isEmpty() && suffix.isEmpty() && player.getDisplayName() != null) {
+            String displayName = player.getDisplayName();
+            String playerName = player.getName();
+
+            if (!displayName.equals(playerName)) {
+                // Trova il nome del giocatore nel display name
+                int nameIndex = displayName.indexOf(playerName);
+                if (nameIndex > 0) {
+                    prefix = displayName.substring(0, nameIndex);
+                }
+                if (nameIndex >= 0 && nameIndex + playerName.length() < displayName.length()) {
+                    suffix = displayName.substring(nameIndex + playerName.length());
+                }
+
+                if (debugMode && !prefix.isEmpty()) {
+                    getLogger().info("[DEBUG] Found prefix from display name: '" + prefix + "'");
+                }
+            }
+        }
+
+        // Log debug se abilitato
+        if (debugMode) {
+            getLogger().info("[DEBUG] Display name: " + player.getDisplayName());
+            getLogger().info("[DEBUG] List name: " + player.getPlayerListName());
+
+            // Mostra tutti i team (per debug)
+            for (Team team : scoreboard.getTeams()) {
+                if (team.hasEntry(player.getName())) {
+                    getLogger().info("[DEBUG] Team: " + team.getName());
+                }
+            }
+        }
+
+        return new String[]{prefix, suffix};
     }
 
     private void updatePlayerColor(UUID uuid, PlayerData data) {
@@ -621,6 +1024,7 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         String[] cachedNames = nameCache.get(data.originalName);
         if (cachedNames == null) return;
 
+        // Usa sempre l'indice normale per l'animazione
         String rainbowName = cachedNames[data.colorIndex];
 
         // Aggiorna solo se cambiato
@@ -629,15 +1033,93 @@ public class RainbowNickname extends JavaPlugin implements Listener {
             data.lastArmorStandName = rainbowName;
         }
 
-        if (!rainbowName.equals(data.lastTabName)) {
-            player.setPlayerListName(rainbowName);
-            data.lastTabName = rainbowName;
+        // Gestione tab list
+        String prefix = "";
+        String suffix = "";
+
+        // Se keepPrefixSuffix è abilitato, ottieni prefix e suffix
+        if (keepPrefixSuffix) {
+            // Usa prima i dati cached
+            if (!data.cachedPrefix.isEmpty() || !data.cachedSuffix.isEmpty()) {
+                prefix = data.cachedPrefix;
+                suffix = data.cachedSuffix;
+            } else {
+                // Altrimenti prova a recuperarli
+                String[] prefixSuffix = getPrefixSuffix(player);
+                prefix = prefixSuffix[0];
+                suffix = prefixSuffix[1];
+
+                // Se trovati, salvali nella cache
+                if (!prefix.isEmpty() || !suffix.isEmpty()) {
+                    data.cachedPrefix = prefix;
+                    data.cachedSuffix = suffix;
+                }
+            }
+
+            // Se ancora vuoti, prova dal listName originale salvato
+            if (prefix.isEmpty() && data.originalListName != null && !data.originalListName.equals(player.getName())) {
+                String originalList = data.originalListName;
+                String playerName = player.getName();
+
+                // Cerca il nome senza colori
+                String cleanList = ChatColor.stripColor(originalList);
+                int namePos = cleanList.indexOf(playerName);
+
+                if (namePos > 0) {
+                    // Conta i caratteri fino alla posizione per trovare il prefix con i colori
+                    int coloredPos = 0;
+                    int cleanPos = 0;
+
+                    while (cleanPos < namePos && coloredPos < originalList.length()) {
+                        if (originalList.charAt(coloredPos) == '§' && coloredPos + 1 < originalList.length()) {
+                            coloredPos += 2;
+                        } else {
+                            cleanPos++;
+                            coloredPos++;
+                        }
+                    }
+
+                    prefix = originalList.substring(0, coloredPos);
+                    data.cachedPrefix = prefix;
+                }
+
+                if (debugMode && !prefix.isEmpty()) {
+                    getLogger().info("[DEBUG] Extracted prefix from original listName: '" + prefix + "'");
+                }
+            }
+        }
+
+        // Costruisci il nome completo per la tab
+        String fullTabName;
+
+        if (animatePrefixSuffix && keepPrefixSuffix) {
+            // Anima anche prefix e suffix
+            String animatedPrefix = applyRainbowEffect(ChatColor.stripColor(prefix), data.colorIndex);
+            String animatedSuffix = applyRainbowEffect(ChatColor.stripColor(suffix), data.colorIndex);
+            fullTabName = animatedPrefix + rainbowName + animatedSuffix;
+        } else if (keepPrefixSuffix) {
+            // Mantieni prefix e suffix originali
+            fullTabName = prefix + rainbowName + suffix;
+        } else {
+            // Solo nome arcobaleno senza prefix/suffix
+            fullTabName = rainbowName;
+        }
+
+        // Aggiorna sempre il playerListName
+        if (!fullTabName.equals(data.lastTabName)) {
+            player.setPlayerListName(fullTabName);
+            data.lastTabName = fullTabName;
+
+            // Debug solo quando cambia
+            if (debugMode && keepPrefixSuffix) {
+                getLogger().info("[DEBUG] Updated tab name for " + player.getName() + " to: " + fullTabName);
+            }
         }
 
         // Mantieni nome originale per chat
         player.setDisplayName(data.originalName);
 
-        // Incrementa indice
+        // Incrementa indice per la prossima animazione
         data.colorIndex = (data.colorIndex + 1) % RAINBOW_COLORS.length;
     }
 
@@ -680,5 +1162,176 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         scoreboard.getTeams().stream()
                 .filter(team -> team.getName().startsWith("rn_") || team.getName().startsWith("rainbow_"))
                 .forEach(Team::unregister);
+    }
+
+    // Metodo più aggressivo per i giocatori senza permesso
+    private void forceUpdateNonRainbowPlayer(Player player) {
+        if (!keepPrefixSuffix || player.hasPermission(PERMISSION)) return;
+
+        UUID uuid = player.getUniqueId();
+        String playerName = player.getName();
+
+        // Log per debug
+        if (debugMode) {
+            getLogger().info("[DEBUG] Force updating non-rainbow player: " + playerName);
+            getLogger().info("[DEBUG] Current tab name: " + player.getPlayerListName());
+        }
+
+        // Prova prima dal team salvato
+        Team savedTeam = originalTeams.get(uuid);
+        String prefix = "";
+        String suffix = "";
+
+        if (savedTeam != null) {
+            prefix = savedTeam.getPrefix();
+            suffix = savedTeam.getSuffix();
+
+            if (debugMode) {
+                getLogger().info("[DEBUG] Using saved team for " + playerName + ": " + savedTeam.getName());
+                getLogger().info("[DEBUG] Saved prefix: '" + prefix + "' suffix: '" + suffix + "'");
+            }
+        }
+
+        // Se non c'è team salvato o è vuoto, cerca quello attuale
+        if (prefix.isEmpty() && suffix.isEmpty()) {
+            // Prima prova a cercare un team che non sia nostro
+            Team currentTeam = null;
+            for (Team team : scoreboard.getTeams()) {
+                if (!team.getName().startsWith("rn_") && team.hasEntry(playerName)) {
+                    currentTeam = team;
+                    prefix = team.getPrefix();
+                    suffix = team.getSuffix();
+                    originalTeams.put(uuid, team); // Salva per dopo
+
+                    if (debugMode) {
+                        getLogger().info("[DEBUG] Found current team for " + playerName + ": " + team.getName());
+                        getLogger().info("[DEBUG] Current prefix: '" + prefix + "' suffix: '" + suffix + "'");
+                    }
+                    break;
+                }
+            }
+
+            // Se ancora niente, cerca QUALSIASI team (anche quelli strani di LuckPerms)
+            if (currentTeam == null) {
+                for (Team team : scoreboard.getTeams()) {
+                    if (team.hasEntry(playerName) && !team.getName().startsWith("rn_")) {
+                        prefix = team.getPrefix();
+                        suffix = team.getSuffix();
+
+                        if (debugMode) {
+                            getLogger().info("[DEBUG] Found ANY team for " + playerName + ": " + team.getName());
+                            getLogger().info("[DEBUG] Any prefix: '" + prefix + "' suffix: '" + suffix + "'");
+                        }
+
+                        if (!prefix.isEmpty() || !suffix.isEmpty()) {
+                            originalTeams.put(uuid, team);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Se ancora niente, prova dal tab name salvato
+        if (prefix.isEmpty() && suffix.isEmpty()) {
+            String savedTabName = originalTabNames.get(uuid);
+            if (savedTabName != null && !savedTabName.equals(playerName)) {
+                if (debugMode) {
+                    getLogger().info("[DEBUG] Trying to extract from saved tab name: " + savedTabName);
+                }
+
+                // Estrai prefix e suffix dal tab name salvato
+                String cleanTabName = ChatColor.stripColor(savedTabName);
+                int nameIndex = cleanTabName.indexOf(playerName);
+
+                if (nameIndex > 0) {
+                    // Estrai il prefix con i colori
+                    prefix = extractColoredPrefix(savedTabName, playerName);
+
+                    if (debugMode) {
+                        getLogger().info("[DEBUG] Extracted prefix: '" + prefix + "'");
+                    }
+                }
+
+                if (nameIndex >= 0 && nameIndex + playerName.length() < cleanTabName.length()) {
+                    // Estrai il suffix con i colori
+                    suffix = extractColoredSuffix(savedTabName, playerName);
+
+                    if (debugMode) {
+                        getLogger().info("[DEBUG] Extracted suffix: '" + suffix + "'");
+                    }
+                }
+            }
+        }
+
+        // Se ANCORA non abbiamo trovato niente, proviamo con il display name
+        if (prefix.isEmpty() && suffix.isEmpty()) {
+            String displayName = player.getDisplayName();
+            if (!displayName.equals(playerName)) {
+                int nameIndex = displayName.indexOf(playerName);
+
+                if (nameIndex > 0) {
+                    prefix = displayName.substring(0, nameIndex);
+                }
+
+                if (nameIndex >= 0 && nameIndex + playerName.length() < displayName.length()) {
+                    suffix = displayName.substring(nameIndex + playerName.length());
+                }
+
+                if (debugMode && (!prefix.isEmpty() || !suffix.isEmpty())) {
+                    getLogger().info("[DEBUG] Extracted from display name - Prefix: '" + prefix + "' Suffix: '" + suffix + "'");
+                }
+            }
+        }
+
+        // Costruisci e imposta il nuovo tab name
+        String newTabName = prefix + playerName + suffix;
+
+        // FORZA l'aggiornamento usando reflection se necessario
+        try {
+            player.setPlayerListName(newTabName);
+
+            // Doppio controllo dopo un tick
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (!player.getPlayerListName().equals(newTabName)) {
+                    player.setPlayerListName(newTabName);
+
+                    if (debugMode) {
+                        getLogger().info("[DEBUG] Had to force update again for " + playerName);
+                    }
+                }
+            }, 1L);
+
+        } catch (Exception e) {
+            if (debugMode) {
+                getLogger().warning("[DEBUG] Failed to update tab name for " + playerName + ": " + e.getMessage());
+            }
+        }
+
+        if (debugMode) {
+            getLogger().info("[DEBUG] Final tab name for " + playerName + ": " + newTabName);
+            getLogger().info("[DEBUG] ========================================");
+        }
+    }
+
+    // Helper per estrarre prefix con colori
+    private String extractColoredPrefix(String fullName, String playerName) {
+        int index = fullName.indexOf(playerName);
+        if (index > 0) {
+            return fullName.substring(0, index);
+        }
+        return "";
+    }
+
+    // Helper per estrarre suffix con colori
+    private String extractColoredSuffix(String fullName, String playerName) {
+        int index = fullName.indexOf(playerName);
+        if (index >= 0) {
+            int endIndex = index + playerName.length();
+            if (endIndex < fullName.length()) {
+                return fullName.substring(endIndex);
+            }
+        }
+        return "";
     }
 }

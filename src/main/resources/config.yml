@@ -3,8 +3,8 @@
 # Rainbow animation speed (in ticks)
 # 20 ticks = 1 second
 # Lower values = faster animation, but more CPU usage
-# Recommended: 10-20 for balance between smoothness and performance
-animation-speed: 10
+# Recommended: 5-10 for smooth animation
+animation-speed: 5
 
 # Use bold text for names
 use-bold: true
@@ -21,6 +21,27 @@ position-threshold: 0.1
 # Use asynchronous tasks for heavy operations
 # Improves performance by using separate threads
 use-async-tasks: true
+
+# Keep prefix and suffix from other plugins in tab list
+# This will preserve ranks, titles, etc. from permission/chat plugins
+# When true, FORCES tab names for ALL players to show their prefix/suffix
+keep-prefix-suffix: true
+
+# Animate prefix and suffix with rainbow effect too
+# Only works if keep-prefix-suffix is true
+# Warning: may cause visual clutter with long prefixes/suffixes
+animate-prefix-suffix: false
+
+# LuckPerms compatibility settings
+luckperms:
+  # Delay before reading prefix/suffix after player join (in ticks)
+  # Increase if LuckPerms prefixes don't show up
+  # 20 ticks = 1 second, 40 = 2 seconds, 60 = 3 seconds
+  join-delay: 60
+
+  # Read prefix/suffix from player list name
+  # Enable this for better LuckPerms compatibility
+  read-from-tab: true
 
 # Tab list configuration
 tab-list:
