@@ -18,14 +18,10 @@ Caratteristiche
 
 
 Comandi
-/rainbownick toggleAttiva/disattiva il tuo nickname arcobaleno     rainbownick.toggle
 /rainbownick reloadRicarica la configurazione    rainbownick.admin/rainbownick 
-speed <tick>Modifica la velocità dell'animazione (1-20)rainbownick.admin
 
 Alias disponibili:
 /rn
 /rainbow
 
 
-Permessi
-PermessoDescrizioneDefaultrainbownick.usePermesso per avere il nickname animatoOPrainbownick.togglePermesso per attivare/disattivare il proprio nicknameTuttirainbownick.adminAccesso ai comandi amministrativiOP
