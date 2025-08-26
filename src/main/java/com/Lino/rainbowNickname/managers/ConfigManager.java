@@ -22,6 +22,11 @@ public class ConfigManager {
     private String tabHeader;
     private String tabFooter;
 
+    private boolean autoAdjustSpeed;
+    private double minTPS;
+    private double lagSpeedMultiplier;
+    private int maxLagSpeed;
+
     public ConfigManager(JavaPlugin plugin) {
         this.plugin = plugin;
         plugin.saveDefaultConfig();
@@ -55,6 +60,11 @@ public class ConfigManager {
                 config.getString("tab-list.header", "&lRainbow Server"));
         tabFooter = ChatColor.translateAlternateColorCodes('&',
                 config.getString("tab-list.footer", "&7Powered by RainbowNickname"));
+
+        autoAdjustSpeed = config.getBoolean("tps-monitor.auto-adjust", true);
+        minTPS = config.getDouble("tps-monitor.min-tps", 18.0);
+        lagSpeedMultiplier = config.getDouble("tps-monitor.lag-speed-multiplier", 0.5);
+        maxLagSpeed = config.getInt("tps-monitor.max-lag-speed", 40);
     }
 
     public int getAnimationSpeed() { return animationSpeed; }
@@ -71,4 +81,8 @@ public class ConfigManager {
     public boolean isUseTabList() { return useTabList; }
     public String getTabHeader() { return tabHeader; }
     public String getTabFooter() { return tabFooter; }
+    public boolean isAutoAdjustSpeed() { return autoAdjustSpeed; }
+    public double getMinTPS() { return minTPS; }
+    public double getLagSpeedMultiplier() { return lagSpeedMultiplier; }
+    public int getMaxLagSpeed() { return maxLagSpeed; }
 }

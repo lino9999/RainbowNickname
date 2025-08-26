@@ -32,6 +32,22 @@ keep-prefix-suffix: true
 # Warning: may cause visual clutter with long prefixes/suffixes
 animate-prefix-suffix: false
 
+# TPS Monitor Configuration
+# Automatically adjusts animation speed when server TPS is low
+tps-monitor:
+  # Enable automatic speed adjustment based on TPS
+  auto-adjust: true
+
+  # Minimum TPS threshold - below this, animation will slow down
+  min-tps: 19.0
+
+  # Speed multiplier when lagging (0.5 = half speed)
+  lag-speed-multiplier: 0.5
+
+  # Maximum animation delay during lag (in ticks)
+  # Prevents animation from becoming too slow
+  max-lag-speed: 40
+
 # LuckPerms compatibility settings
 luckperms:
   # Delay before reading prefix/suffix after player join (in ticks)

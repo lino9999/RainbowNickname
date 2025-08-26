@@ -23,6 +23,7 @@ public class RainbowNickname extends JavaPlugin {
     private TabListManager tabListManager;
     private PlayerDataManager playerDataManager;
     private TaskManager taskManager;
+    private TPSMonitor tpsMonitor;
 
     @Override
     public void onEnable() {
@@ -32,12 +33,17 @@ public class RainbowNickname extends JavaPlugin {
         tabListManager = new TabListManager(configManager, animationManager);
         playerDataManager = new PlayerDataManager(configManager, animationManager, tabListManager);
         taskManager = new TaskManager(this, configManager, playerDataManager, tabListManager, armorStandManager);
+        tpsMonitor = new TPSMonitor(this, configManager);
+
+        taskManager.setTPSMonitor(tpsMonitor);
 
         getServer().getPluginManager().registerEvents(new EventListener(this), this);
         getCommand("rainbownick").setExecutor(new CommandHandler(this));
 
         tabListManager.cleanupOldTeams();
         armorStandManager.cleanupOrphanedArmorStands();
+
+        tpsMonitor.start();
 
         if (configManager.isUseAsyncTasks()) {
             Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
@@ -75,11 +81,13 @@ public class RainbowNickname extends JavaPlugin {
         getLogger().info("Prefix/Suffix: " + (configManager.isKeepPrefixSuffix() ? "ENABLED for ALL players" : "DISABLED"));
         getLogger().info("Read from tab: " + (configManager.isReadFromTab() ? "ENABLED" : "DISABLED"));
         getLogger().info("Delay LuckPerms: " + configManager.getLuckpermsJoinDelay() + " ticks");
+        getLogger().info("TPS Auto-adjust: " + (configManager.isAutoAdjustSpeed() ? "ENABLED" : "DISABLED"));
     }
 
     @Override
     public void onDisable() {
         taskManager.cancelAllTasks();
+        tpsMonitor.stop();
 
         playerDataManager.getAllPlayerData().values().parallelStream().forEach(data -> {
             if (data.armorStand != null && !data.armorStand.isDead()) {
@@ -182,6 +190,7 @@ public class RainbowNickname extends JavaPlugin {
         sender.sendMessage(ChatColor.YELLOW + "Reloading RainbowNickname...");
 
         taskManager.cancelAllTasks();
+        tpsMonitor.stop();
 
         for (PlayerData data : playerDataManager.getAllPlayerData().values()) {
             if (data.armorStand != null && !data.armorStand.isDead()) {
@@ -204,6 +213,10 @@ public class RainbowNickname extends JavaPlugin {
 
         configManager.reload();
 
+        tpsMonitor = new TPSMonitor(this, configManager);
+        taskManager.setTPSMonitor(tpsMonitor);
+        tpsMonitor.start();
+
         armorStandManager.cleanupOrphanedArmorStands();
 
         for (Player player : Bukkit.getOnlinePlayers()) {
@@ -223,4 +236,5 @@ public class RainbowNickname extends JavaPlugin {
     public ArmorStandManager getArmorStandManager() { return armorStandManager; }
     public TabListManager getTabListManager() { return tabListManager; }
     public PlayerDataManager getPlayerDataManager() { return playerDataManager; }
+    public TPSMonitor getTPSMonitor() { return tpsMonitor; }
 }

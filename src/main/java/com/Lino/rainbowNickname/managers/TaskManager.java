@@ -16,6 +16,7 @@ public class TaskManager {
     private final PlayerDataManager playerDataManager;
     private final TabListManager tabListManager;
     private final ArmorStandManager armorStandManager;
+    private TPSMonitor tpsMonitor;
 
     private BukkitRunnable animationTask;
     private BukkitRunnable positionTask;
@@ -30,6 +31,10 @@ public class TaskManager {
         this.playerDataManager = playerDataManager;
         this.tabListManager = tabListManager;
         this.armorStandManager = armorStandManager;
+    }
+
+    public void setTPSMonitor(TPSMonitor tpsMonitor) {
+        this.tpsMonitor = tpsMonitor;
     }
 
     public void startAllTasks() {
@@ -52,6 +57,8 @@ public class TaskManager {
 
     private void startAnimationTask() {
         animationTask = new BukkitRunnable() {
+            private int lastSpeed = config.getAnimationSpeed();
+
             @Override
             public void run() {
                 for (UUID uuid : playerDataManager.getPermittedPlayers()) {
@@ -61,10 +68,23 @@ public class TaskManager {
                 if (config.isUseTabList()) {
                     tabListManager.updateAllTabLists();
                 }
+
+                if (tpsMonitor != null && config.isAutoAdjustSpeed()) {
+                    int currentSpeed = tpsMonitor.getAdjustedAnimationSpeed();
+                    if (currentSpeed != lastSpeed) {
+                        lastSpeed = currentSpeed;
+                        cancel();
+                        startAnimationTask();
+                    }
+                }
             }
         };
 
-        animationTask.runTaskTimer(plugin, 0L, config.getAnimationSpeed());
+        int speed = (tpsMonitor != null && config.isAutoAdjustSpeed())
+                ? tpsMonitor.getAdjustedAnimationSpeed()
+                : config.getAnimationSpeed();
+
+        animationTask.runTaskTimer(plugin, 0L, speed);
     }
 
     private void startPositionTask() {
