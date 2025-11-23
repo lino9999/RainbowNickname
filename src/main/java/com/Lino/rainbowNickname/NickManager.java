@@ -19,9 +19,9 @@ public class NickManager {
 
     private final RainbowNickname plugin;
     private final Map<UUID, TextDisplay> activeNicks = new HashMap<>();
+    private final Map<UUID, AnimationType> playerAnimations = new HashMap<>();
 
     private final MiniMessage miniMessage = MiniMessage.miniMessage();
-
     private final LegacyComponentSerializer legacySerializer = LegacyComponentSerializer.builder()
             .hexColors()
             .useUnusualXRepeatedCharacterHexFormat()
@@ -32,8 +32,19 @@ public class NickManager {
         this.plugin = plugin;
     }
 
+    public void setAnimation(Player player, AnimationType type) {
+        playerAnimations.put(player.getUniqueId(), type);
+        enableNick(player);
+    }
+
+    public AnimationType getAnimation(Player player) {
+        return playerAnimations.get(player.getUniqueId());
+    }
+
     public void enableNick(Player player) {
-        if (activeNicks.containsKey(player.getUniqueId())) disableNick(player);
+        if (!playerAnimations.containsKey(player.getUniqueId())) return;
+
+        if (activeNicks.containsKey(player.getUniqueId())) disableNickVisuals(player);
 
         hideVanillaNametag(player);
 
@@ -51,32 +62,40 @@ public class NickManager {
     }
 
     public void disableNick(Player player) {
+        disableNickVisuals(player);
+        playerAnimations.remove(player.getUniqueId());
+    }
+
+    private void disableNickVisuals(Player player) {
         TextDisplay display = activeNicks.remove(player.getUniqueId());
         if (display != null && display.isValid()) display.remove();
         player.setPlayerListName(player.getName());
     }
 
     public void updateNick(Player player, float phase) {
+        if (!playerAnimations.containsKey(player.getUniqueId())) return;
+
         TextDisplay display = activeNicks.get(player.getUniqueId());
         if (display == null || !display.isValid()) {
             enableNick(player);
             return;
         }
 
+        AnimationType type = playerAnimations.get(player.getUniqueId());
         float safePhase = phase % 1.0f;
-        String name = player.getName();
-        String gradientTag = "<bold><gradient:red:gold:yellow:green:aqua:blue:light_purple:" + safePhase + ">" + name + "</gradient></bold>";
+        String pattern = type.getPattern().replace("%phase%", String.valueOf(safePhase));
 
         try {
-            Component component = miniMessage.deserialize(gradientTag);
-            String rainbowName = legacySerializer.serialize(component);
+            String fullTag = pattern + player.getName() + "</gradient></bold>";
+            Component component = miniMessage.deserialize(fullTag);
+            String legacyName = legacySerializer.serialize(component);
 
-            display.setText(rainbowName);
+            display.setText(legacyName);
 
             String prefix = plugin.getHookManager().getPrefix(player);
             String suffix = plugin.getHookManager().getSuffix(player);
 
-            player.setPlayerListName(prefix + rainbowName + suffix);
+            player.setPlayerListName(prefix + legacyName + suffix);
 
         } catch (Exception e) {
             display.setText(player.getName());

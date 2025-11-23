@@ -5,8 +5,6 @@ import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
 
 public class DataManager {
@@ -40,24 +38,22 @@ public class DataManager {
         }
     }
 
-    public boolean isNickEnabled(UUID uuid) {
-        List<String> enabledPlayers = config.getStringList("enabled-players");
-        return enabledPlayers.contains(uuid.toString());
+    public AnimationType getPlayerAnimation(UUID uuid) {
+        String typeName = config.getString("players." + uuid.toString());
+        if (typeName == null) return null;
+        try {
+            return AnimationType.valueOf(typeName);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
-    public void setNickEnabled(UUID uuid, boolean enabled) {
-        List<String> enabledPlayers = config.getStringList("enabled-players");
-        String uuidStr = uuid.toString();
-
-        if (enabled) {
-            if (!enabledPlayers.contains(uuidStr)) {
-                enabledPlayers.add(uuidStr);
-            }
+    public void setPlayerAnimation(UUID uuid, AnimationType type) {
+        if (type == null) {
+            config.set("players." + uuid.toString(), null);
         } else {
-            enabledPlayers.remove(uuidStr);
+            config.set("players." + uuid.toString(), type.name());
         }
-
-        config.set("enabled-players", enabledPlayers);
         saveData();
     }
 }

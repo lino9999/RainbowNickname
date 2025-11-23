@@ -1,5 +1,6 @@
 package com.Lino.rainbowNickname.commands;
 
+import com.Lino.rainbowNickname.AnimationType;
 import com.Lino.rainbowNickname.RainbowNickname;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
@@ -9,8 +10,10 @@ import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class MainCommand implements CommandExecutor, TabCompleter {
 
@@ -39,49 +42,77 @@ public class MainCommand implements CommandExecutor, TabCompleter {
                 plugin.getMessageManager().sendMessage(sender, "reload-success");
                 break;
 
-            case "toggle":
             case "set":
-                if (!sender.hasPermission("rainbownick.command.toggle")) {
+                if (!sender.hasPermission("rainbownick.command.set")) {
                     plugin.getMessageManager().sendMessage(sender, "no-permission");
                     return true;
                 }
+                if (args.length < 2) {
+                    plugin.getMessageManager().sendMessage(sender, "usage-set");
+                    return true;
+                }
 
-                Player target;
-                if (args.length > 1) {
+                String typeName = args[1].toUpperCase();
+                AnimationType type;
+                try {
+                    type = AnimationType.valueOf(typeName);
+                } catch (IllegalArgumentException e) {
+                    plugin.getMessageManager().sendMessage(sender, "invalid-type");
+                    return true;
+                }
+
+                Player targetSet;
+                if (args.length > 2) {
                     if (!sender.hasPermission("rainbownick.admin")) {
                         plugin.getMessageManager().sendMessage(sender, "no-permission");
                         return true;
                     }
-                    target = Bukkit.getPlayer(args[1]);
-                    if (target == null) {
+                    targetSet = Bukkit.getPlayer(args[2]);
+                    if (targetSet == null) {
                         plugin.getMessageManager().sendMessage(sender, "player-not-found");
                         return true;
                     }
                 } else if (sender instanceof Player) {
-                    target = (Player) sender;
+                    targetSet = (Player) sender;
                 } else {
                     plugin.getMessageManager().sendMessage(sender, "only-players");
                     return true;
                 }
 
-                // Logica aggiornata con DataManager
-                boolean currentlyEnabled = plugin.getNickManager().hasNick(target);
+                plugin.getNickManager().setAnimation(targetSet, type);
+                plugin.getDataManager().setPlayerAnimation(targetSet.getUniqueId(), type);
 
-                if (currentlyEnabled) {
-                    // Disabilita visivamente
-                    plugin.getNickManager().disableNick(target);
-                    // Salva nel database che è disabilitato
-                    plugin.getDataManager().setNickEnabled(target.getUniqueId(), false);
+                plugin.getMessageManager().sendMessage(sender, "nick-set", "%type%", type.getDisplayName());
+                break;
 
-                    plugin.getMessageManager().sendMessage(sender, "nick-disabled", "%player%", target.getName());
-                } else {
-                    // Abilita visivamente
-                    plugin.getNickManager().enableNick(target);
-                    // Salva nel database che è abilitato
-                    plugin.getDataManager().setNickEnabled(target.getUniqueId(), true);
-
-                    plugin.getMessageManager().sendMessage(sender, "nick-enabled", "%player%", target.getName());
+            case "off":
+            case "disable":
+                if (!sender.hasPermission("rainbownick.command.set")) {
+                    plugin.getMessageManager().sendMessage(sender, "no-permission");
+                    return true;
                 }
+
+                Player targetOff;
+                if (args.length > 1) {
+                    if (!sender.hasPermission("rainbownick.admin")) {
+                        plugin.getMessageManager().sendMessage(sender, "no-permission");
+                        return true;
+                    }
+                    targetOff = Bukkit.getPlayer(args[1]);
+                    if (targetOff == null) {
+                        plugin.getMessageManager().sendMessage(sender, "player-not-found");
+                        return true;
+                    }
+                } else if (sender instanceof Player) {
+                    targetOff = (Player) sender;
+                } else {
+                    plugin.getMessageManager().sendMessage(sender, "only-players");
+                    return true;
+                }
+
+                plugin.getNickManager().disableNick(targetOff);
+                plugin.getDataManager().setPlayerAnimation(targetOff.getUniqueId(), null);
+                plugin.getMessageManager().sendMessage(sender, "nick-disabled", "%player%", targetOff.getName());
                 break;
 
             case "help":
@@ -98,8 +129,9 @@ public class MainCommand implements CommandExecutor, TabCompleter {
 
     private void sendHelp(CommandSender sender) {
         plugin.getMessageManager().sendRawMessage(sender, "help-header");
-        if (sender.hasPermission("rainbownick.command.toggle")) {
-            plugin.getMessageManager().sendRawMessage(sender, "help-toggle");
+        if (sender.hasPermission("rainbownick.command.set")) {
+            plugin.getMessageManager().sendRawMessage(sender, "help-set");
+            plugin.getMessageManager().sendRawMessage(sender, "help-off");
         }
         if (sender.hasPermission("rainbownick.admin")) {
             plugin.getMessageManager().sendRawMessage(sender, "help-reload");
@@ -112,13 +144,16 @@ public class MainCommand implements CommandExecutor, TabCompleter {
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) {
             List<String> options = new ArrayList<>();
-            if (sender.hasPermission("rainbownick.command.toggle")) options.add("toggle");
+            if (sender.hasPermission("rainbownick.command.set")) {
+                options.add("set");
+                options.add("off");
+            }
             if (sender.hasPermission("rainbownick.admin")) options.add("reload");
             options.add("help");
             return options;
         }
-        if (args.length == 2 && args[0].equalsIgnoreCase("toggle") && sender.hasPermission("rainbownick.admin")) {
-            return null;
+        if (args.length == 2 && args[0].equalsIgnoreCase("set") && sender.hasPermission("rainbownick.command.set")) {
+            return Arrays.stream(AnimationType.values()).map(Enum::name).collect(Collectors.toList());
         }
         return Collections.emptyList();
     }

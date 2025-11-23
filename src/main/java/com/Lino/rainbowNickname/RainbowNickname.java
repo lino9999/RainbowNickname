@@ -31,17 +31,15 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         getCommand("rainbownick").setExecutor(new MainCommand(this));
 
         if (Bukkit.getPluginManager().isPluginEnabled("LuckPerms")) {
-            getLogger().info("LuckPerms rilevato! Prefissi abilitati.");
+            getLogger().info("LuckPerms detected! Prefixes enabled.");
         }
 
         for (Player player : Bukkit.getOnlinePlayers()) {
-            if (dataManager.isNickEnabled(player.getUniqueId())) {
-                nickManager.enableNick(player);
-            }
+            restoreNick(player);
         }
 
         startAnimationLoop();
-        getLogger().info("RainbowNickname v2.1 abilitato!");
+        getLogger().info("RainbowNickname v2.3 enabled (Smooth Mode)!");
     }
 
     @Override
@@ -50,7 +48,7 @@ public class RainbowNickname extends JavaPlugin implements Listener {
             animationTask.cancel();
         }
         nickManager.removeAll();
-        getLogger().info("RainbowNickname disabilitato.");
+        getLogger().info("RainbowNickname disabled.");
     }
 
     public void reloadPlugin() {
@@ -60,12 +58,22 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         dataManager.loadData();
     }
 
+    private void restoreNick(Player player) {
+        AnimationType type = dataManager.getPlayerAnimation(player.getUniqueId());
+        if (type != null) {
+            nickManager.setAnimation(player, type);
+        }
+    }
+
     private void startAnimationLoop() {
         animationTask = new BukkitRunnable() {
             @Override
             public void run() {
-                rainbowPhase -= 0.05f;
-                if (rainbowPhase < -100.0f) rainbowPhase = 0.0f;
+                // MODIFICA QUI: Da 0.05f a 0.02f per maggiore fluidità
+                rainbowPhase -= 0.02f;
+
+                // Reset fase
+                if (rainbowPhase < -1000.0f) rainbowPhase = 0.0f;
 
                 for (Player player : Bukkit.getOnlinePlayers()) {
                     if (nickManager.hasNick(player)) {
@@ -76,6 +84,7 @@ public class RainbowNickname extends JavaPlugin implements Listener {
                 }
             }
         };
+        // Gira sempre a 1 tick per fluidità massima
         animationTask.runTaskTimer(this, 1L, 1L);
     }
 
@@ -83,8 +92,8 @@ public class RainbowNickname extends JavaPlugin implements Listener {
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
         Bukkit.getScheduler().runTaskLater(this, () -> {
-            if (player.isOnline() && dataManager.isNickEnabled(player.getUniqueId())) {
-                nickManager.enableNick(player);
+            if (player.isOnline()) {
+                restoreNick(player);
             }
         }, 20L);
     }
