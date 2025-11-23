@@ -1,0 +1,15 @@
+prefix: "<bold><gradient:#00c6ff:#0072ff>RainbowNick</gradient></bold> <dark_gray>»</dark_gray> "
+no-permission: "<gradient:#ff416c:#ff4b2b>You do not have permission to use this command.</gradient>"
+reload-success: "<gradient:#11998e:#38ef7d>Plugin reloaded successfully!</gradient>"
+player-not-found: "<gradient:#cb2d3e:#ef473a>Player not found.</gradient>"
+only-players: "<gradient:#cb2d3e:#ef473a>Only players can use this command.</gradient>"
+usage: "<gradient:#f7971e:#ffd200>Usage: /rn <toggle|reload|help></gradient>"
+
+nick-enabled: "<gradient:#56ab2f:#a8e063>Rainbow nickname ENABLED for</gradient> <white>%player%</white><green>.</green>"
+nick-disabled: "<gradient:#ed213a:#93291e>Rainbow nickname DISABLED for</gradient> <white>%player%</white><red>.</red>"
+
+help-header: "<st><dark_gray>=============</dark_gray></st> <bold><gradient:#8E2DE2:#4A00E0>RainbowNickname Help</gradient></bold> <st><dark_gray>=============</dark_gray></st>"
+help-toggle: "<gradient:#fceabb:#f8b500>/rn toggle [player]</gradient> <dark_gray>-</dark_gray> <italic><gray>Toggle rainbow nickname</gray></italic>"
+help-reload: "<gradient:#fceabb:#f8b500>/rn reload</gradient> <dark_gray>-</dark_gray> <italic><gray>Reload the plugin</gray></italic>"
+help-help: "<gradient:#fceabb:#f8b500>/rn help</gradient> <dark_gray>-</dark_gray> <italic><gray>Show this help menu</gray></italic>"
+help-footer: "<st><dark_gray>=============================================</dark_gray></st>"
