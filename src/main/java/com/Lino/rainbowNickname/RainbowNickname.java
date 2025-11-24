@@ -17,6 +17,7 @@ public class RainbowNickname extends JavaPlugin implements Listener {
     private MessageManager messageManager;
     private DataManager dataManager;
     private HookManager hookManager;
+    private GuiManager guiManager;
     private BukkitRunnable animationTask;
     private float rainbowPhase = 0.0f;
 
@@ -26,8 +27,10 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         this.dataManager = new DataManager(this);
         this.hookManager = new HookManager();
         this.nickManager = new NickManager(this);
+        this.guiManager = new GuiManager(this);
 
         getServer().getPluginManager().registerEvents(this, this);
+        getServer().getPluginManager().registerEvents(guiManager, this);
         getCommand("rainbownick").setExecutor(new MainCommand(this));
 
         if (Bukkit.getPluginManager().isPluginEnabled("LuckPerms")) {
@@ -39,7 +42,7 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         }
 
         startAnimationLoop();
-        getLogger().info("RainbowNickname v2.3 enabled (Smooth Mode)!");
+        getLogger().info("RainbowNickname v2.4 enabled!");
     }
 
     @Override
@@ -69,10 +72,7 @@ public class RainbowNickname extends JavaPlugin implements Listener {
         animationTask = new BukkitRunnable() {
             @Override
             public void run() {
-                // MODIFICA QUI: Da 0.05f a 0.02f per maggiore fluidità
                 rainbowPhase -= 0.02f;
-
-                // Reset fase
                 if (rainbowPhase < -1000.0f) rainbowPhase = 0.0f;
 
                 for (Player player : Bukkit.getOnlinePlayers()) {
@@ -84,7 +84,6 @@ public class RainbowNickname extends JavaPlugin implements Listener {
                 }
             }
         };
-        // Gira sempre a 1 tick per fluidità massima
         animationTask.runTaskTimer(this, 1L, 1L);
     }
 
@@ -119,4 +118,5 @@ public class RainbowNickname extends JavaPlugin implements Listener {
     public MessageManager getMessageManager() { return messageManager; }
     public DataManager getDataManager() { return dataManager; }
     public HookManager getHookManager() { return hookManager; }
+    public GuiManager getGuiManager() { return guiManager; }
 }

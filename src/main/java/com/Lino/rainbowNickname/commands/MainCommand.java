@@ -33,6 +33,18 @@ public class MainCommand implements CommandExecutor, TabCompleter {
         String subCommand = args[0].toLowerCase();
 
         switch (subCommand) {
+            case "gui":
+                if (!(sender instanceof Player)) {
+                    plugin.getMessageManager().sendMessage(sender, "only-players");
+                    return true;
+                }
+                if (!sender.hasPermission("rainbownick.command.set")) {
+                    plugin.getMessageManager().sendMessage(sender, "no-permission");
+                    return true;
+                }
+                plugin.getGuiManager().openGui((Player) sender);
+                break;
+
             case "reload":
                 if (!sender.hasPermission("rainbownick.admin")) {
                     plugin.getMessageManager().sendMessage(sender, "no-permission");
@@ -130,6 +142,7 @@ public class MainCommand implements CommandExecutor, TabCompleter {
     private void sendHelp(CommandSender sender) {
         plugin.getMessageManager().sendRawMessage(sender, "help-header");
         if (sender.hasPermission("rainbownick.command.set")) {
+            plugin.getMessageManager().sendRawMessage(sender, "help-gui");
             plugin.getMessageManager().sendRawMessage(sender, "help-set");
             plugin.getMessageManager().sendRawMessage(sender, "help-off");
         }
@@ -145,6 +158,7 @@ public class MainCommand implements CommandExecutor, TabCompleter {
         if (args.length == 1) {
             List<String> options = new ArrayList<>();
             if (sender.hasPermission("rainbownick.command.set")) {
+                options.add("gui");
                 options.add("set");
                 options.add("off");
             }
