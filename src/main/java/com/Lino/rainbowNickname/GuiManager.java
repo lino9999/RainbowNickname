@@ -13,7 +13,9 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 public class GuiManager implements Listener {
 
@@ -37,8 +39,20 @@ public class GuiManager implements Listener {
             ItemStack item = new ItemStack(type.getIcon());
             ItemMeta meta = item.getItemMeta();
             if (meta != null) {
-                Component component = miniMessage.deserialize("<!i>" + type.getDisplayName());
-                meta.setDisplayName(legacySerializer.serialize(component));
+                Component nameComponent = miniMessage.deserialize("<!i>" + type.getDisplayName());
+                meta.setDisplayName(legacySerializer.serialize(nameComponent));
+
+                List<String> lore = new ArrayList<>();
+                lore.add("");
+
+                Component descComponent = miniMessage.deserialize("<!i>" + type.getDescription());
+                lore.add(legacySerializer.serialize(descComponent));
+
+                lore.add("");
+                Component clickComponent = miniMessage.deserialize("<!i><dark_gray>» <yellow>Click to apply!</yellow>");
+                lore.add(legacySerializer.serialize(clickComponent));
+
+                meta.setLore(lore);
                 item.setItemMeta(meta);
             }
             gui.addItem(item);
@@ -47,7 +61,14 @@ public class GuiManager implements Listener {
         ItemStack close = new ItemStack(Material.BARRIER);
         ItemMeta closeMeta = close.getItemMeta();
         if (closeMeta != null) {
-            closeMeta.setDisplayName("§cDisable Nickname");
+            Component closeName = miniMessage.deserialize("<!i><red>Disable Nickname</red>");
+            closeMeta.setDisplayName(legacySerializer.serialize(closeName));
+
+            List<String> closeLore = new ArrayList<>();
+            closeLore.add("");
+            closeLore.add(legacySerializer.serialize(miniMessage.deserialize("<!i><gray>Click to remove your animation.</gray>")));
+            closeMeta.setLore(closeLore);
+
             close.setItemMeta(closeMeta);
         }
         gui.setItem(17, close);
