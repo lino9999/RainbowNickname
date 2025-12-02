@@ -64,6 +64,11 @@ It fully supports **MiniMessage** gradients and preserves your existing **LuckPe
 ---
 
 <div align="center">
+   <p>I've just launched https://www.hytaleservers.it/</p>
+   <p>Are you working on a server? List it now for free and build your audience before launch.​</p>
+</div>
+
+<div align="center">
   <p>Made with ❤️ by Lino</p>
   <p>Using <b>MiniMessage</b> and <b>TextDisplays</b> for maximum performance.</p>
 </div>
